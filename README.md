@@ -1,4 +1,4 @@
-# remind
+# Redmindr
 
 A lightweight desktop notification scheduler for macOS and Linux.
 
