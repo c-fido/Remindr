@@ -1,0 +1,188 @@
+# remind
+
+A lightweight desktop notification scheduler for macOS and Linux.
+
+Two binaries ship together:
+
+| Binary      | Role                                                    |
+|-------------|---------------------------------------------------------|
+| `reminderd` | Background daemon — watches timers, fires notifications |
+| `remind`    | CLI — add, list, and delete reminders                   |
+
+---
+
+## Install
+
+### Requirements
+
+| Tool     | Version  | Notes                                              |
+|----------|----------|----------------------------------------------------|
+| CMake    | ≥ 3.14   |                                                    |
+| C++ compiler | C++17 | Clang or GCC                                    |
+| Internet | first build only | fetches `nlohmann/json` automatically   |
+
+On macOS the Xcode Command Line Tools provide both CMake (via Homebrew) and Clang:
+
+```sh
+xcode-select --install       # installs clang
+brew install cmake           # if you don't have cmake yet
+```
+
+On Debian/Ubuntu:
+
+```sh
+sudo apt install cmake g++
+```
+
+### Build
+
+```sh
+git clone <repo-url>
+cd remind
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+```
+
+### Copy binaries to your PATH
+
+Pick any directory that is on your `$PATH`. No `sudo` is needed if you use `~/.local/bin`:
+
+```sh
+mkdir -p ~/.local/bin
+cp build/remind build/reminderd ~/.local/bin/
+```
+
+**macOS / fish** — if `~/.local/bin` is not on your PATH yet:
+
+```sh
+fish_add_path ~/.local/bin
+```
+
+**macOS / zsh or bash** — add to `~/.zshrc` or `~/.bashrc`:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+**Linux** — `~/.local/bin` is usually already on the PATH in modern distros. If not, add the same export line above.
+
+Alternatively, install system-wide (requires `sudo`):
+
+```sh
+sudo cmake --install build   # installs to /usr/local/bin by default
+```
+
+### Register as a startup service
+
+This makes `reminderd` start automatically at login and keeps it alive if it ever crashes:
+
+```sh
+remind --install
+```
+
+- **macOS** — writes a launchd plist to `~/Library/LaunchAgents/` and immediately bootstraps it with `launchctl`. No reboot needed.
+- **Linux** — writes a systemd user service to `~/.config/systemd/user/`. Enable it with:
+
+  ```sh
+  systemctl --user daemon-reload
+  systemctl --user enable --now reminderd
+  ```
+
+Verify the daemon is running:
+
+```sh
+# macOS
+launchctl list | grep reminderd
+
+# Linux
+systemctl --user status reminderd
+```
+
+---
+
+## Usage
+
+### Add a reminder
+
+No quotes needed — time tokens are detected automatically from the end of the command:
+
+```sh
+remind coffee chat friday 3pm
+remind call mom in 2 hours
+remind dentist appointment tuesday at 10:30am
+remind standup tomorrow 9am --daily
+remind team meeting monday at 10am --weekly
+```
+
+Quoted messages also work if you prefer:
+
+```sh
+remind "take out the trash" tomorrow 8pm
+```
+
+#### Time expression reference
+
+| Pattern               | Example              |
+|-----------------------|----------------------|
+| `in N minutes`        | `in 45 minutes`      |
+| `in N hours`          | `in 2 hours`         |
+| `in N days`           | `in 3 days`          |
+| `in N weeks`          | `in 1 week`          |
+| `tomorrow`            | `tomorrow`           |
+| `tomorrow <time>`     | `tomorrow 9am`       |
+| `<weekday>`           | `friday`             |
+| `<weekday> at <time>` | `friday at 4pm`      |
+| `<time>`              | `16:00` / `4:30pm`   |
+
+Time formats accepted: `4pm`, `4:30pm`, `16:00`, `9am`. All day and time keywords are case-insensitive.
+
+Weekday reminders always fire on the **next** occurrence of that day (never today).
+Clock-only reminders fire today if the time hasn't passed yet, or tomorrow if it has.
+
+#### Recurrence flags
+
+| Flag       | Behaviour                   |
+|------------|-----------------------------|
+| `--daily`  | Re-fires every 24 hours     |
+| `--weekly` | Re-fires every 7 days       |
+
+### List upcoming reminders
+
+```sh
+remind list
+```
+
+### Delete a reminder
+
+```sh
+remind delete <id>
+```
+
+Use the ID shown by `remind list`.
+
+---
+
+## How it works
+
+`reminderd` runs a `select()`-based event loop with a 1-second tick. On each tick it checks whether any reminder's `fire_at` timestamp has passed and, if so, fires a native notification:
+
+| Platform | Notification command                                           |
+|----------|----------------------------------------------------------------|
+| macOS    | `osascript -e 'display notification "…" with title "Remind"'` |
+| Linux    | `notify-send "Remind" "…"`                                     |
+
+`remind` connects to the daemon over a Unix domain socket (`/tmp/reminderd.sock`) and sends newline-delimited JSON commands (`ADD`, `LIST`, `DELETE`).
+
+Reminders are persisted to disk on every change. If the file is corrupt at startup it is backed up and a fresh store is created.
+
+---
+
+## File locations
+
+| Path                                 | Purpose                        |
+|--------------------------------------|--------------------------------|
+| `~/.config/reminderd/reminders.json` | Persistent reminder store      |
+| `~/.config/reminderd/reminderd.log`  | Daemon log (autostart only)    |
+| `/tmp/reminderd.sock`                | Unix domain socket             |
+| `~/Library/LaunchAgents/com.remind.reminderd.plist` | macOS autostart (created by `--install`) |
+| `~/.config/systemd/user/reminderd.service` | Linux autostart (created by `--install`) |
