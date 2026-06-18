@@ -22,8 +22,6 @@
 static const char* SOCK_PATH  = "/tmp/reminderd.sock";
 static const int   MAX_CLIENTS = 32;
 
-// ── storage ──────────────────────────────────────────────────────────────────
-
 static std::string reminders_path() {
     const char* home = std::getenv("HOME");
     if (!home) home = "/tmp";
@@ -67,8 +65,6 @@ static void load_reminders() {
     }
 }
 
-// ── notifications ─────────────────────────────────────────────────────────────
-
 static void fire_notification(const std::string& message) {
     // Escape single quotes in the message to avoid shell injection.
     std::string safe;
@@ -89,8 +85,6 @@ static void fire_notification(const std::string& message) {
     std::FILE* p = popen(cmd.c_str(), "r");
     if (p) pclose(p);
 }
-
-// ── timer checks ─────────────────────────────────────────────────────────────
 
 static void check_timers() {
     auto now = static_cast<int64_t>(std::time(nullptr));
@@ -114,8 +108,6 @@ static void check_timers() {
 
     if (dirty) save_reminders();
 }
-
-// ── command handling ──────────────────────────────────────────────────────────
 
 static uint64_t generate_id() {
     auto ts  = static_cast<uint64_t>(std::time(nullptr));
@@ -178,14 +170,11 @@ static std::string handle_command(const std::string& raw) {
     }
 }
 
-// ── main ──────────────────────────────────────────────────────────────────────
-
 int main() {
     std::srand(static_cast<unsigned>(std::time(nullptr)));
     load_reminders();
 
-    // Remove stale socket file.
-    ::unlink(SOCK_PATH);
+    ::unlink(SOCK_PATH); // remove stale socket from a previous run
 
     int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_fd < 0) {
@@ -211,10 +200,8 @@ int main() {
 
     std::cerr << "reminderd: listening on " << SOCK_PATH << "\n";
 
-    // client_fds holds currently connected CLI clients.
     std::vector<int> client_fds;
-    // Partial read buffers per client (indexed parallel to client_fds).
-    std::vector<std::string> client_bufs;
+    std::vector<std::string> client_bufs; // parallel partial-read buffers
 
     while (true) {
         fd_set read_fds;
@@ -244,7 +231,6 @@ int main() {
 
         if (ready == 0) continue; // timeout — timers already checked above
 
-        // New connection?
         if (FD_ISSET(server_fd, &read_fds)) {
             int client_fd = accept(server_fd, nullptr, nullptr);
             if (client_fd >= 0 && static_cast<int>(client_fds.size()) < MAX_CLIENTS) {
@@ -255,7 +241,6 @@ int main() {
             }
         }
 
-        // Existing clients?
         for (size_t i = 0; i < client_fds.size(); ) {
             int fd = client_fds[i];
             if (!FD_ISSET(fd, &read_fds)) { ++i; continue; }
@@ -271,7 +256,6 @@ int main() {
 
             client_bufs[i].append(buf, static_cast<size_t>(n));
 
-            // Process all complete newline-delimited messages.
             size_t pos;
             while ((pos = client_bufs[i].find('\n')) != std::string::npos) {
                 std::string line = client_bufs[i].substr(0, pos);

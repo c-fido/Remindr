@@ -43,44 +43,48 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
 ```
 
-### Copy binaries to your PATH
+### Install binaries
 
-Pick any directory that is on your `$PATH`. No `sudo` is needed if you use `~/.local/bin`:
+Install to `~/.local/bin` (no `sudo` required, recommended):
 
 ```sh
-mkdir -p ~/.local/bin
-cp build/remind build/reminderd ~/.local/bin/
+cmake --install build --prefix ~/.local
 ```
 
-**macOS / fish** — if `~/.local/bin` is not on your PATH yet:
+Or system-wide:
 
+```sh
+sudo cmake --install build   # installs to /usr/local/bin
+```
+
+Make sure the install directory is on your `$PATH`:
+
+**fish**
 ```sh
 fish_add_path ~/.local/bin
 ```
 
-**macOS / zsh or bash** — add to `~/.zshrc` or `~/.bashrc`:
-
+**zsh / bash** — add to `~/.zshrc` or `~/.bashrc`:
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-**Linux** — `~/.local/bin` is usually already on the PATH in modern distros. If not, add the same export line above.
-
-Alternatively, install system-wide (requires `sudo`):
-
-```sh
-sudo cmake --install build   # installs to /usr/local/bin by default
-```
-
 ### Register as a startup service
 
-This makes `reminderd` start automatically at login and keeps it alive if it ever crashes:
+Run **without `sudo`** as your normal login user:
 
 ```sh
 remind --install
 ```
 
-- **macOS** — writes a launchd plist to `~/Library/LaunchAgents/` and immediately bootstraps it with `launchctl`. No reboot needed.
+- **macOS** — writes a launchd plist to `~/Library/LaunchAgents/` and attempts to start `reminderd` immediately. It tries `launchctl bootstrap` first, then falls back to `launchctl load -w`. If both fail, the plist is still installed and `reminderd` will start automatically on next login. You can also start it manually:
+
+  ```sh
+  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.remind.reminderd.plist
+  ```
+
+  > **Note:** do not run `remind --install` with `sudo` — the daemon must be registered in your user's GUI session, not root's.
+
 - **Linux** — writes a systemd user service to `~/.config/systemd/user/`. Enable it with:
 
   ```sh
@@ -92,7 +96,7 @@ Verify the daemon is running:
 
 ```sh
 # macOS
-launchctl list | grep reminderd
+launchctl list com.remind.reminderd
 
 # Linux
 systemctl --user status reminderd

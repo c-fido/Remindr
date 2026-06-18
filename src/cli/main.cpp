@@ -21,8 +21,6 @@
 
 static const char* SOCK_PATH = "/tmp/reminderd.sock";
 
-// ── time expression parser ───────────────────────────────────────────────────
-
 static std::string to_lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
         [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
@@ -93,7 +91,6 @@ static std::optional<std::time_t> parse_time_expr(const std::string& expr) {
         }
     }
 
-    // Helper: split on whitespace
     auto split = [](const std::string& str) -> std::vector<std::string> {
         std::vector<std::string> tokens;
         std::istringstream iss(str);
@@ -105,15 +102,10 @@ static std::optional<std::time_t> parse_time_expr(const std::string& expr) {
     auto tokens = split(s);
     if (tokens.empty()) return std::nullopt;
 
-    // Look for optional "at" between day and time.
-    // Patterns: <day> [at] <clock>  |  <clock>  |  <day>
-    // Pull out a possible day token (first token) and clock token (last token,
-    // skipping "at").
     int clock_secs  = -1;
-    int target_wday = -1;  // 0-6, or -1 = not specified
+    int target_wday = -1;  // 0-6, -1 = not set
     bool has_tomorrow = false;
 
-    // Find "tomorrow" or day-name anywhere
     for (size_t i = 0; i < tokens.size(); ++i) {
         if (tokens[i] == "tomorrow") { has_tomorrow = true; continue; }
         if (tokens[i] == "at")       continue;
@@ -122,10 +114,6 @@ static std::optional<std::time_t> parse_time_expr(const std::string& expr) {
         int cs = parse_clock(tokens[i]);
         if (cs >= 0) { clock_secs = cs; continue; }
     }
-
-    // 2. Day name only (no clock time) → midnight of that day
-    // 3. Clock time only
-    // 4. Combinations
 
     std::time_t now = std::time(nullptr);
     struct tm tm_now{};
@@ -136,7 +124,6 @@ static std::optional<std::time_t> parse_time_expr(const std::string& expr) {
 #endif
 
     if (has_tomorrow && clock_secs < 0) {
-        // tomorrow midnight
         struct tm t = tm_now;
         t.tm_mday  += 1;
         t.tm_hour   = 0; t.tm_min = 0; t.tm_sec = 0;
@@ -191,8 +178,6 @@ static std::optional<std::time_t> parse_time_expr(const std::string& expr) {
     return std::nullopt;
 }
 
-// ── formatting helpers ────────────────────────────────────────────────────────
-
 static std::string format_time(int64_t ts) {
     auto t = static_cast<std::time_t>(ts);
     struct tm tm_buf{};
@@ -207,8 +192,6 @@ static std::string format_id(uint64_t id) {
     oss << id;
     return oss.str();
 }
-
-// ── install helpers ───────────────────────────────────────────────────────────
 
 static std::string find_reminderd() {
 #ifdef __APPLE__
@@ -231,8 +214,6 @@ static int do_install() {
     std::string agents_dir = std::string(home) + "/Library/LaunchAgents";
     std::string plist_path = agents_dir + "/com.remind.reminderd.plist";
 
-    // Locate reminderd next to this binary via /proc (Linux) or _NSGetExecutablePath (macOS).
-    // Simplest portable approach: use the PATH.
     std::string reminderd_path = find_reminderd();
     std::string log_path = std::string(home) + "/.config/reminderd/reminderd.log";
 
@@ -268,18 +249,45 @@ static int do_install() {
         std::cout << "Installed: " << plist_path << "\n";
         std::cout << "Daemon binary: " << reminderd_path << "\n";
 
-        // Load (or reload) the agent so it starts immediately.
-        // Use the modern bootstrap/bootout API (macOS 10.11+).
-        std::string uid = std::to_string(static_cast<int>(::getuid()));
+        // Prefer SUDO_UID when elevated — gui/0 doesn't support LaunchAgent bootstrap.
+        uid_t real_uid = ::getuid();
+        const char* sudo_uid_env = std::getenv("SUDO_UID");
+        if (sudo_uid_env) {
+            try { real_uid = static_cast<uid_t>(std::stoul(sudo_uid_env)); } catch (...) {}
+        }
+        if (real_uid == 0) {
+            std::cerr << "remind: --install should not be run as root; "
+                         "run without sudo as your login user.\n";
+            return 1;
+        }
+        std::string uid    = std::to_string(static_cast<unsigned>(real_uid));
         std::string domain = "gui/" + uid;
-        std::string unload_cmd = "launchctl bootout " + domain + " \"" + plist_path + "\" 2>/dev/null";
-        std::string load_cmd   = "launchctl bootstrap " + domain + " \"" + plist_path + "\"";
-        std::system(unload_cmd.c_str());
-        int rc = std::system(load_cmd.c_str());
-        if (rc == 0)
+        static const char* SERVICE_LABEL = "com.remind.reminderd";
+
+        // launchd may have auto-loaded the plist already; bootout by label first
+        // so we can do a clean bootstrap.
+        std::string bootout_cmd = "launchctl bootout " + domain + "/" + SERVICE_LABEL + " 2>/dev/null";
+        std::system(bootout_cmd.c_str());
+
+        // bootstrap is the modern way; load -w is deprecated but more lenient on Apple Silicon.
+        std::string bootstrap_cmd = "launchctl bootstrap " + domain + " \"" + plist_path + "\" 2>/dev/null";
+        std::string load_cmd      = "launchctl load -w \"" + plist_path + "\" 2>/dev/null";
+        std::string check_cmd     = "launchctl list " + std::string(SERVICE_LABEL) + " >/dev/null 2>&1";
+
+        bool started = false;
+        if (std::system(bootstrap_cmd.c_str()) == 0)
+            started = true;
+        else if (std::system(load_cmd.c_str()) == 0)
+            started = true;
+        else
+            started = (std::system(check_cmd.c_str()) == 0); // auto-loaded by launchd?
+
+        if (started)
             std::cout << "reminderd started and will launch at every login.\n";
         else
-            std::cout << "To start now: launchctl bootstrap " << domain << " " << plist_path << "\n";
+            std::cout << "Plist installed. To start now:\n"
+                      << "  launchctl bootstrap " << domain << " \"" << plist_path << "\"\n"
+                      << "Or log out and back in.\n";
     } catch (const std::exception& e) {
         std::cerr << "remind: " << e.what() << "\n";
         return 1;
@@ -322,8 +330,6 @@ WantedBy=default.target
 }
 #endif
 
-// ── socket communication ──────────────────────────────────────────────────────
-
 static int daemon_fd() {
     int fd = connect_to_daemon(SOCK_PATH);
     if (fd < 0) {
@@ -332,8 +338,6 @@ static int daemon_fd() {
     }
     return fd;
 }
-
-// ── usage ─────────────────────────────────────────────────────────────────────
 
 static void print_usage() {
     std::cout << R"(Usage:
@@ -360,12 +364,9 @@ Time expression tokens:
 )";
 }
 
-// ── main ──────────────────────────────────────────────────────────────────────
-
 int main(int argc, char* argv[]) {
     if (argc < 2) { print_usage(); return 1; }
 
-    // Strip flags and collect positional args.
     Recurrence recur = Recurrence::NONE;
     std::vector<std::string> args;
     for (int i = 1; i < argc; ++i) {
@@ -378,10 +379,8 @@ int main(int argc, char* argv[]) {
 
     std::string subcmd = args[0];
 
-    // ── remind --install ─────────────────────────────────────────────────────
     if (subcmd == "--install") return do_install();
 
-    // ── remind list ──────────────────────────────────────────────────────────
     if (subcmd == "list") {
         int fd = daemon_fd();
         nlohmann::json cmd{{"type", "LIST"}};
@@ -423,7 +422,6 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // ── remind delete <id> ────────────────────────────────────────────────────
     if (subcmd == "delete") {
         if (args.size() < 2) { std::cerr << "remind: delete requires an id\n"; return 1; }
         uint64_t id = 0;
@@ -449,14 +447,9 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // ── remind <message words…> <time expr words…> [--daily|--weekly] ─────────
-    // Split args into message + time expression automatically:
-    //   • If "in" appears at position ≥1, everything from "in" onward is the time.
-    //   • Otherwise scan from the right collecting contiguous time tokens
-    //     (day names, "tomorrow", "at", clock patterns).
     std::string message, time_expr;
 
-    // Check for "in N unit" pattern.
+    // "in N unit" anchors the time expression; otherwise scan from the right.
     int in_pos = -1;
     for (int i = 1; i < (int)args.size(); ++i) {
         if (to_lower(args[i]) == "in") { in_pos = i; break; }
@@ -472,7 +465,6 @@ int main(int argc, char* argv[]) {
             time_expr += args[i];
         }
     } else {
-        // Scan from right collecting contiguous time tokens.
         int time_start = (int)args.size();
         for (int i = (int)args.size() - 1; i >= 0; --i) {
             if (is_time_token(args[i])) time_start = i;
