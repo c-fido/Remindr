@@ -2,12 +2,13 @@
 
 A lightweight desktop notification scheduler for macOS and Linux.
 
-Two binaries ship together:
+Two binaries and one helper ship together:
 
-| Binary      | Role                                                    |
-|-------------|---------------------------------------------------------|
-| `reminderd` | Background daemon — watches timers, fires notifications |
-| `remind`    | CLI — add, list, and delete reminders                   |
+| Artifact          | Role                                                          |
+|-------------------|---------------------------------------------------------------|
+| `reminderd`       | Background daemon — watches timers, fires notifications       |
+| `remind`          | CLI — add, list, and delete reminders                         |
+| `Redmindr.app`    | macOS notification helper (proper Notification Center entry)  |
 
 ---
 
@@ -15,16 +16,17 @@ Two binaries ship together:
 
 ### Requirements
 
-| Tool     | Version  | Notes                                              |
-|----------|----------|----------------------------------------------------|
-| CMake    | ≥ 3.14   |                                                    |
-| C++ compiler | C++17 | Clang or GCC                                    |
-| Internet | first build only | fetches `nlohmann/json` automatically   |
+| Tool             | Version        | Notes                                            |
+|------------------|----------------|--------------------------------------------------|
+| CMake            | ≥ 3.14         |                                                  |
+| C++ compiler     | C++17          | Clang or GCC                                     |
+| Swift compiler   | any            | macOS only; provides native notification support |
+| Internet         | first build    | fetches `nlohmann/json` automatically            |
 
-On macOS the Xcode Command Line Tools provide both CMake (via Homebrew) and Clang:
+On macOS the Xcode Command Line Tools provide Clang and `swiftc`:
 
 ```sh
-xcode-select --install       # installs clang
+xcode-select --install
 brew install cmake           # if you don't have cmake yet
 ```
 
@@ -43,6 +45,14 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
 ```
 
+**Clean build** (wipes the build directory and starts fresh):
+
+```sh
+rm -rf build
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+```
+
 ### Install binaries
 
 Install to `~/.local/bin` (no `sudo` required, recommended):
@@ -51,10 +61,17 @@ Install to `~/.local/bin` (no `sudo` required, recommended):
 cmake --install build --prefix ~/.local
 ```
 
+On macOS, also codesign the notification helper so the system accepts it:
+
+```sh
+codesign -s - --deep --force ~/.local/bin/Redmindr.app
+```
+
 Or system-wide:
 
 ```sh
 sudo cmake --install build   # installs to /usr/local/bin
+sudo codesign -s - --deep --force /usr/local/bin/Redmindr.app
 ```
 
 Make sure the install directory is on your `$PATH`:
@@ -77,7 +94,7 @@ Run **without `sudo`** as your normal login user:
 remind --install
 ```
 
-- **macOS** — writes a launchd plist to `~/Library/LaunchAgents/` and attempts to start `reminderd` immediately. It tries `launchctl bootstrap` first, then falls back to `launchctl load -w`. If both fail, the plist is still installed and `reminderd` will start automatically on next login. You can also start it manually:
+- **macOS** — writes a launchd plist to `~/Library/LaunchAgents/` and attempts to start `reminderd` immediately via `launchctl bootstrap`. If that fails the plist is still installed and `reminderd` will start on next login. You can also start it manually:
 
   ```sh
   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.remind.reminderd.plist
@@ -101,6 +118,16 @@ launchctl list com.remind.reminderd
 # Linux
 systemctl --user status reminderd
 ```
+
+### Grant notification permission (macOS)
+
+The first time a reminder fires, macOS will prompt you to allow notifications from **Redmindr**. You can also trigger this manually:
+
+```sh
+~/.local/bin/Redmindr.app/Contents/MacOS/remind-notify Redmindr "Notifications enabled!"
+```
+
+After approving, **Redmindr** appears in **System Settings → Notifications** where you can control the alert style.
 
 ---
 
@@ -170,10 +197,10 @@ Use the ID shown by `remind list`.
 
 `reminderd` runs a `select()`-based event loop with a 1-second tick. On each tick it checks whether any reminder's `fire_at` timestamp has passed and, if so, fires a native notification:
 
-| Platform | Notification command                                           |
-|----------|----------------------------------------------------------------|
-| macOS    | `osascript -e 'display notification "…" with title "Remind"'` |
-| Linux    | `notify-send "Remind" "…"`                                     |
+| Platform | Notification mechanism                                                  |
+|----------|-------------------------------------------------------------------------|
+| macOS    | `Redmindr.app` Swift helper via `UNUserNotificationCenter` (with `osascript` fallback if the helper is missing) |
+| Linux    | `notify-send`                                                           |
 
 `remind` connects to the daemon over a Unix domain socket (`/tmp/reminderd.sock`) and sends newline-delimited JSON commands (`ADD`, `LIST`, `DELETE`).
 
@@ -183,10 +210,11 @@ Reminders are persisted to disk on every change. If the file is corrupt at start
 
 ## File locations
 
-| Path                                 | Purpose                        |
-|--------------------------------------|--------------------------------|
-| `~/.config/reminderd/reminders.json` | Persistent reminder store      |
-| `~/.config/reminderd/reminderd.log`  | Daemon log (autostart only)    |
-| `/tmp/reminderd.sock`                | Unix domain socket             |
-| `~/Library/LaunchAgents/com.remind.reminderd.plist` | macOS autostart (created by `--install`) |
-| `~/.config/systemd/user/reminderd.service` | Linux autostart (created by `--install`) |
+| Path                                                    | Purpose                                       |
+|---------------------------------------------------------|-----------------------------------------------|
+| `~/.config/reminderd/reminders.json`                    | Persistent reminder store                     |
+| `~/.config/reminderd/reminderd.log`                     | Daemon log (autostart only)                   |
+| `/tmp/reminderd.sock`                                   | Unix domain socket                            |
+| `~/.local/bin/Redmindr.app`                             | macOS notification helper (installed with `cmake --install`) |
+| `~/Library/LaunchAgents/com.remind.reminderd.plist`     | macOS autostart (created by `remind --install`) |
+| `~/.config/systemd/user/reminderd.service`              | Linux autostart (created by `remind --install`) |

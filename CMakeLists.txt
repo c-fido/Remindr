@@ -65,8 +65,41 @@ target_include_directories(remind PRIVATE src/common)
 target_link_libraries(remind PRIVATE remind_common)
 add_dependencies(remind copy_json)
 
+# ── remind-notify (macOS Swift notification helper) ───────────────────────────
+if(APPLE)
+    find_program(SWIFTC swiftc)
+    if(SWIFTC)
+        set(NOTIFY_APP "${CMAKE_BINARY_DIR}/Redmindr.app")
+        set(NOTIFY_EXE "${NOTIFY_APP}/Contents/MacOS/remind-notify")
+
+        add_custom_command(
+            OUTPUT "${NOTIFY_EXE}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${NOTIFY_APP}/Contents/MacOS"
+            COMMAND "${SWIFTC}"
+                    -o "${NOTIFY_EXE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/main.swift"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/Info.plist"
+                    "${NOTIFY_APP}/Contents/Info.plist"
+            DEPENDS
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/main.swift"
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/Info.plist"
+            COMMENT "Building Redmindr notification helper"
+        )
+        add_custom_target(remind_notify ALL DEPENDS "${NOTIFY_EXE}")
+    else()
+        message(STATUS "swiftc not found — notification helper not built (osascript fallback active)")
+    endif()
+endif()
+
 # ── install ───────────────────────────────────────────────────────────────────
 include(GNUInstallDirs)
 install(TARGETS remind reminderd
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+if(APPLE AND SWIFTC)
+    install(DIRECTORY "${CMAKE_BINARY_DIR}/Redmindr.app"
+        DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        USE_SOURCE_PERMISSIONS
+    )
+endif()

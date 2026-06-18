@@ -12,8 +12,13 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
+#ifdef __APPLE__
+#include <climits>
+#include <mach-o/dyld.h>
+#endif
 
 #include "../common/json.hpp"
 #include "../common/reminder.hpp"
@@ -65,25 +70,76 @@ static void load_reminders() {
     }
 }
 
+#ifdef __APPLE__
+static std::string find_notifier() {
+    char buf[PATH_MAX];
+    uint32_t size = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &size) == 0) {
+        auto helper = std::filesystem::path(buf).parent_path()
+                      / "Redmindr.app" / "Contents" / "MacOS" / "remind-notify";
+        if (std::filesystem::exists(helper))
+            return helper.string();
+    }
+    return "";
+}
+#endif
+
 static void fire_notification(const std::string& message) {
-    // Escape single quotes in the message to avoid shell injection.
+#ifdef __APPLE__
+    // Prefer the native Swift helper (proper UNUserNotificationCenter, appears in
+    // System Settings > Notifications as "Redmindr"). Fall back to osascript if
+    // the helper bundle hasn't been installed.
+    static const std::string notifier = find_notifier();
+    if (!notifier.empty()) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            execl(notifier.c_str(), "remind-notify", "Redmindr", message.c_str(), (char*)nullptr);
+            _exit(127);
+        } else if (pid > 0) {
+            int status = 0;
+            waitpid(pid, &status, 0);
+            if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+                std::cerr << "reminderd: notifier exited with status "
+                          << WEXITSTATUS(status) << "\n";
+        } else {
+            std::cerr << "reminderd: fork(): " << std::strerror(errno) << "\n";
+        }
+        return;
+    }
+
+    // osascript fallback — escape for shell (single-quote) and AppleScript (double-quote).
     std::string safe;
-    safe.reserve(message.size());
+    safe.reserve(message.size() * 2);
+    for (char c : message) {
+        if      (c == '\'') safe += "'\\''";
+        else if (c == '"')  safe += "\\\"";
+        else if (c == '\\') safe += "\\\\";
+        else                safe += c;
+    }
+    std::string cmd = "osascript -e 'display notification \""
+                    + safe + "\" with title \"Redmindr\"' 2>&1";
+    std::FILE* p = popen(cmd.c_str(), "r");
+    if (!p) { std::cerr << "reminderd: failed to launch osascript\n"; return; }
+    char buf[256]; std::string out;
+    while (std::fgets(buf, sizeof(buf), p)) out += buf;
+    int st = pclose(p);
+    if (st != 0) {
+        std::cerr << "reminderd: osascript failed (status " << st << ")";
+        if (!out.empty()) std::cerr << ": " << out; else std::cerr << "\n";
+    }
+
+#elif defined(__linux__)
+    std::string safe;
+    safe.reserve(message.size() * 2);
     for (char c : message) {
         if (c == '\'') safe += "'\\''";
         else           safe += c;
     }
-
-#ifdef __APPLE__
-    std::string cmd = "osascript -e 'display notification \""
-                    + safe + "\" with title \"Remind\"' &";
-#elif defined(__linux__)
-    std::string cmd = "notify-send 'Remind' '" + safe + "' &";
+    std::string cmd = "notify-send 'Redmindr' '" + safe + "'";
+    std::system(cmd.c_str());
 #else
-    std::string cmd = "echo 'Remind: " + safe + "' &";
+    std::cerr << "Redmindr: " << message << "\n";
 #endif
-    std::FILE* p = popen(cmd.c_str(), "r");
-    if (p) pclose(p);
 }
 
 static void check_timers() {
