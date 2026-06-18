@@ -270,8 +270,8 @@ static int do_install() {
         std::system(bootout_cmd.c_str());
 
         // bootstrap is the modern way; load -w is deprecated but more lenient on Apple Silicon.
-        std::string bootstrap_cmd = "launchctl bootstrap " + domain + " \"" + plist_path + "\" 2>/dev/null";
-        std::string load_cmd      = "launchctl load -w \"" + plist_path + "\" 2>/dev/null";
+        std::string bootstrap_cmd = "launchctl bootstrap " + domain + " \"" + plist_path + "\"";
+        std::string load_cmd      = "launchctl load -w \"" + plist_path + "\"";
         std::string check_cmd     = "launchctl list " + std::string(SERVICE_LABEL) + " >/dev/null 2>&1";
 
         bool started = false;
@@ -283,7 +283,9 @@ static int do_install() {
             started = (std::system(check_cmd.c_str()) == 0); // auto-loaded by launchd?
 
         if (started)
-            std::cout << "reminderd started and will launch at every login.\n";
+            std::cout << "reminderd started and will launch at every login.\n"
+                      << "Note: if notifications do not appear, open System Settings > Notifications\n"
+                      << "and enable notifications for Script Editor.\n";
         else
             std::cout << "Plist installed. To start now:\n"
                       << "  launchctl bootstrap " << domain << " \"" << plist_path << "\"\n"
