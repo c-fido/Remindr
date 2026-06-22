@@ -191,6 +191,29 @@ remind delete <id>
 
 Use the ID shown by `remind list`.
 
+### Notification sound
+
+Toggle the sound on or off:
+
+```sh
+remind sound on
+remind sound off
+```
+
+Use a custom sound file (`.caf`, `.aiff`, `.wav`, or `.mp3`):
+
+```sh
+remind sound set ~/Downloads/my-sound.caf
+```
+
+The file is copied into `~/.config/reminderd/` so you can move or delete the original afterwards.
+
+Revert to the system default notification sound:
+
+```sh
+remind sound reset
+```
+
 ---
 
 ## How it works
@@ -199,7 +222,7 @@ Use the ID shown by `remind list`.
 
 | Platform | Notification mechanism                                                  |
 |----------|-------------------------------------------------------------------------|
-| macOS    | `Redmindr.app` Swift helper via `UNUserNotificationCenter` (with `osascript` fallback if the helper is missing) |
+| macOS    | `Redmindr.app` Swift helper via `UNUserNotificationCenter` — displays the Redmindr icon and plays the system default sound (or a custom sound if set). Falls back to `osascript` if the helper is missing. |
 | Linux    | `notify-send`                                                           |
 
 `remind` connects to the daemon over a Unix domain socket (`/tmp/reminderd.sock`) and sends newline-delimited JSON commands (`ADD`, `LIST`, `DELETE`).
@@ -213,6 +236,8 @@ Reminders are persisted to disk on every change. If the file is corrupt at start
 | Path                                                    | Purpose                                       |
 |---------------------------------------------------------|-----------------------------------------------|
 | `~/.config/reminderd/reminders.json`                    | Persistent reminder store                     |
+| `~/.config/reminderd/config.json`                       | Sound on/off flag and custom sound path       |
+| `~/.config/reminderd/custom-sound.<ext>`                | Custom sound file (copied by `remind sound set`) |
 | `~/.config/reminderd/reminderd.log`                     | Daemon log (autostart only)                   |
 | `/tmp/reminderd.sock`                                   | Unix domain socket                            |
 | `~/.local/bin/Redmindr.app`                             | macOS notification helper (installed with `cmake --install`) |

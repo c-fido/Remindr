@@ -1,0 +1,5 @@
+if(EXISTS "${SRC}")
+    get_filename_component(DST_DIR "${DST}" DIRECTORY)
+    file(MAKE_DIRECTORY "${DST_DIR}")
+    file(COPY_FILE "${SRC}" "${DST}" ONLY_IF_DIFFERENT)
+endif()
