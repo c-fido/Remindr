@@ -8,6 +8,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # ── warnings ──────────────────────────────────────────────────────────────────
 add_compile_options(-Wall -Wextra -Wpedantic)
 
+# ── LTO for Release ───────────────────────────────────────────────────────────
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT _ipo_ok OUTPUT _ipo_err)
+    if(_ipo_ok)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+    endif()
+endif()
+
 # ── nlohmann/json via FetchContent ────────────────────────────────────────────
 include(FetchContent)
 FetchContent_Declare(
@@ -44,19 +53,6 @@ target_include_directories(reminderd PRIVATE src/common)
 target_link_libraries(reminderd PRIVATE remind_common)
 add_dependencies(reminderd copy_json)
 
-# Optional: link libnotify on Linux if available.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(LIBNOTIFY QUIET libnotify)
-        if(LIBNOTIFY_FOUND)
-            target_compile_definitions(reminderd PRIVATE HAVE_LIBNOTIFY)
-            target_include_directories(reminderd PRIVATE ${LIBNOTIFY_INCLUDE_DIRS})
-            target_link_libraries(reminderd PRIVATE ${LIBNOTIFY_LIBRARIES})
-        endif()
-    endif()
-endif()
-
 # ── remind (CLI) ──────────────────────────────────────────────────────────────
 add_executable(remind
     src/cli/main.cpp
@@ -72,8 +68,11 @@ if(APPLE)
         set(NOTIFY_APP "${CMAKE_BINARY_DIR}/Redmindr.app")
         set(NOTIFY_EXE "${NOTIFY_APP}/Contents/MacOS/remind-notify")
 
+        set(ICONSET_DIR "${CMAKE_BINARY_DIR}/Redmindr.iconset")
+        set(ICNS_FILE   "${NOTIFY_APP}/Contents/Resources/Redmindr.icns")
+
         add_custom_command(
-            OUTPUT "${NOTIFY_EXE}"
+            OUTPUT "${NOTIFY_EXE}" "${ICNS_FILE}"
             COMMAND "${CMAKE_COMMAND}" -E make_directory "${NOTIFY_APP}/Contents/MacOS"
             COMMAND "${SWIFTC}"
                     -o "${NOTIFY_EXE}"
@@ -81,12 +80,19 @@ if(APPLE)
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                     "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/Info.plist"
                     "${NOTIFY_APP}/Contents/Info.plist"
+            # Generate app icon: compile the generator, render iconset, convert with iconutil.
+            COMMAND "${SWIFTC}" -framework Cocoa
+                    -o "${CMAKE_BINARY_DIR}/make_icon"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/make_icon.swift"
+            COMMAND "${CMAKE_BINARY_DIR}/make_icon" "${ICONSET_DIR}"
+            COMMAND iconutil -c icns -o "${ICNS_FILE}" "${ICONSET_DIR}"
             DEPENDS
                 "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/main.swift"
                 "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/Info.plist"
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/make_icon.swift"
             COMMENT "Building Redmindr notification helper"
         )
-        add_custom_target(remind_notify ALL DEPENDS "${NOTIFY_EXE}")
+        add_custom_target(remind_notify ALL DEPENDS "${NOTIFY_EXE}" "${ICNS_FILE}")
     else()
         message(STATUS "swiftc not found — notification helper not built (osascript fallback active)")
     endif()

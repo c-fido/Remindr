@@ -11,6 +11,8 @@
     <string>Redmindr</string>
     <key>CFBundleExecutable</key>
     <string>remind-notify</string>
+    <key>CFBundleIconFile</key>
+    <string>Redmindr</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundleShortVersionString</key>

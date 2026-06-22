@@ -1,6 +1,5 @@
 #include <algorithm>
 #include <cerrno>
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -12,7 +11,7 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <sys/wait.h>
+#include <signal.h>
 #include <unistd.h>
 #include <vector>
 #ifdef __APPLE__
@@ -27,18 +26,24 @@
 static const char* SOCK_PATH  = "/tmp/reminderd.sock";
 static const int   MAX_CLIENTS = 32;
 
-static std::string reminders_path() {
-    const char* home = std::getenv("HOME");
-    if (!home) home = "/tmp";
-    return std::string(home) + "/.config/reminderd/reminders.json";
+static const std::string& reminders_path() {
+    static const std::string path = []() {
+        const char* home = std::getenv("HOME");
+        return std::string(home ? home : "/tmp") + "/.config/reminderd/reminders.json";
+    }();
+    return path;
 }
 
 static std::vector<Reminder> g_reminders;
 
 static void save_reminders() {
+    static bool dir_ensured = false;
     try {
-        std::string path = reminders_path();
-        std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+        const std::string& path = reminders_path();
+        if (!dir_ensured) {
+            std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+            dir_ensured = true;
+        }
         nlohmann::json j = g_reminders;
         std::ofstream f(path);
         if (!f) throw std::runtime_error("cannot open for writing: " + path);
@@ -93,17 +98,12 @@ static void fire_notification(const std::string& message) {
     if (!notifier.empty()) {
         pid_t pid = fork();
         if (pid == 0) {
-            execl(notifier.c_str(), "remind-notify", "Redmindr", message.c_str(), (char*)nullptr);
+            execl(notifier.c_str(), notifier.c_str(), "Redmindr", message.c_str(), (char*)nullptr);
             _exit(127);
-        } else if (pid > 0) {
-            int status = 0;
-            waitpid(pid, &status, 0);
-            if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
-                std::cerr << "reminderd: notifier exited with status "
-                          << WEXITSTATUS(status) << "\n";
-        } else {
+        } else if (pid < 0) {
             std::cerr << "reminderd: fork(): " << std::strerror(errno) << "\n";
         }
+        // Child is reaped automatically by SIGCHLD SIG_IGN set in main().
         return;
     }
 
@@ -129,14 +129,14 @@ static void fire_notification(const std::string& message) {
     }
 
 #elif defined(__linux__)
-    std::string safe;
-    safe.reserve(message.size() * 2);
-    for (char c : message) {
-        if (c == '\'') safe += "'\\''";
-        else           safe += c;
+    pid_t pid = fork();
+    if (pid == 0) {
+        const char* argv[] = {"notify-send", "Redmindr", message.c_str(), nullptr};
+        execvp("notify-send", const_cast<char* const*>(argv));
+        _exit(127);
+    } else if (pid < 0) {
+        std::cerr << "reminderd: fork(): " << std::strerror(errno) << "\n";
     }
-    std::string cmd = "notify-send 'Redmindr' '" + safe + "'";
-    std::system(cmd.c_str());
 #else
     std::cerr << "Redmindr: " << message << "\n";
 #endif
@@ -146,19 +146,22 @@ static void check_timers() {
     auto now = static_cast<int64_t>(std::time(nullptr));
     bool dirty = false;
 
-    for (auto& r : g_reminders) {
-        if (!r.fired && r.fire_at <= now) {
-            fire_notification(r.message);
-            r.fired = true;
-            dirty   = true;
+    for (auto it = g_reminders.begin(); it != g_reminders.end(); ) {
+        if (it->fire_at <= now) {
+            fire_notification(it->message);
+            dirty = true;
 
-            if (r.recurrence == Recurrence::DAILY) {
-                r.fire_at += 86400;
-                r.fired = false;
-            } else if (r.recurrence == Recurrence::WEEKLY) {
-                r.fire_at += 604800;
-                r.fired = false;
+            if (it->recurrence == Recurrence::DAILY) {
+                it->fire_at += 86400;
+                ++it;
+            } else if (it->recurrence == Recurrence::WEEKLY) {
+                it->fire_at += 604800;
+                ++it;
+            } else {
+                it = g_reminders.erase(it);
             }
+        } else {
+            ++it;
         }
     }
 
@@ -194,10 +197,8 @@ static std::string handle_command(const std::string& raw) {
             nlohmann::json arr = nlohmann::json::array();
             auto now = static_cast<int64_t>(std::time(nullptr));
             for (const auto& r : g_reminders) {
-                if (!r.fired || r.recurrence != Recurrence::NONE) {
-                    if (r.fire_at >= now || r.recurrence != Recurrence::NONE) {
-                        arr.push_back(r);
-                    }
+                if (r.fire_at >= now || r.recurrence != Recurrence::NONE) {
+                    arr.push_back(r);
                 }
             }
             nlohmann::json resp{{"ok", true}, {"reminders", arr}};
@@ -227,6 +228,9 @@ static std::string handle_command(const std::string& raw) {
 }
 
 int main() {
+    // Auto-reap notification helper children so they don't block the event loop.
+    signal(SIGCHLD, SIG_IGN);
+
     std::srand(static_cast<unsigned>(std::time(nullptr)));
     load_reminders();
 

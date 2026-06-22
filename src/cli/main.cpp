@@ -117,11 +117,7 @@ static std::optional<std::time_t> parse_time_expr(const std::string& expr) {
 
     std::time_t now = std::time(nullptr);
     struct tm tm_now{};
-#ifdef __APPLE__
     localtime_r(&now, &tm_now);
-#else
-    localtime_r(&now, &tm_now);
-#endif
 
     if (has_tomorrow && clock_secs < 0) {
         struct tm t = tm_now;
@@ -185,12 +181,6 @@ static std::string format_time(int64_t ts) {
     char buf[64];
     std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &tm_buf);
     return buf;
-}
-
-static std::string format_id(uint64_t id) {
-    std::ostringstream oss;
-    oss << id;
-    return oss.str();
 }
 
 static std::string find_reminderd() {
@@ -341,11 +331,104 @@ static int daemon_fd() {
     return fd;
 }
 
+static std::string config_path() {
+    const char* home = std::getenv("HOME");
+    if (!home) home = "/tmp";
+    return std::string(home) + "/.config/reminderd/config.json";
+}
+
+static nlohmann::json load_config() {
+    nlohmann::json cfg = nlohmann::json::object();
+    std::ifstream f(config_path());
+    if (f) { try { f >> cfg; } catch (...) {} }
+    return cfg;
+}
+
+static int save_config(const nlohmann::json& cfg) {
+    std::string path = config_path();
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+    std::ofstream f(path);
+    if (!f) { std::cerr << "remind: cannot write " << path << "\n"; return 1; }
+    f << cfg.dump(2) << "\n";
+    return 0;
+}
+
+static int do_sound_toggle(const std::string& onoff) {
+    bool enable;
+    if (onoff == "on")       enable = true;
+    else if (onoff == "off") enable = false;
+    else {
+        std::cerr << "remind: sound on|off|set <file>|reset\n";
+        return 1;
+    }
+    auto cfg = load_config();
+    cfg["sound_enabled"] = enable;
+    if (save_config(cfg) != 0) return 1;
+    std::cout << "Notification sound " << (enable ? "enabled" : "disabled") << ".\n";
+    return 0;
+}
+
+static int do_sound_set(const std::string& src) {
+    if (!std::filesystem::exists(src)) {
+        std::cerr << "remind: file not found: " << src << "\n";
+        return 1;
+    }
+    std::string ext = std::filesystem::path(src).extension().string();
+    if (ext != ".caf" && ext != ".aiff" && ext != ".wav" && ext != ".mp3") {
+        std::cerr << "remind: unsupported format — use .caf, .aiff, .wav, or .mp3\n";
+        return 1;
+    }
+
+    // Copy into the config dir so the original file can be moved/deleted freely.
+    std::string cfgdir = std::filesystem::path(config_path()).parent_path().string();
+    std::filesystem::create_directories(cfgdir);
+    std::string dest = cfgdir + "/custom-sound" + ext;
+    try {
+        std::filesystem::copy_file(src, dest, std::filesystem::copy_options::overwrite_existing);
+    } catch (const std::exception& e) {
+        std::cerr << "remind: failed to copy sound file: " << e.what() << "\n";
+        return 1;
+    }
+
+    auto cfg = load_config();
+    cfg["sound_file"] = dest;
+    if (save_config(cfg) != 0) return 1;
+    std::cout << "Custom notification sound set to: " << dest << "\n";
+    return 0;
+}
+
+static int do_sound_reset() {
+    auto cfg = load_config();
+    cfg.erase("sound_file");
+    if (save_config(cfg) != 0) return 1;
+    std::cout << "Notification sound reset to default.\n";
+    return 0;
+}
+
+static int do_sound(const std::vector<std::string>& sound_args) {
+    if (sound_args.empty()) {
+        std::cerr << "remind: sound on|off|set <file>|reset\n";
+        return 1;
+    }
+    const std::string& sub = sound_args[0];
+    if (sub == "on" || sub == "off") return do_sound_toggle(sub);
+    if (sub == "reset")              return do_sound_reset();
+    if (sub == "set") {
+        if (sound_args.size() < 2) { std::cerr << "remind: sound set requires a file path\n"; return 1; }
+        return do_sound_set(sound_args[1]);
+    }
+    std::cerr << "remind: sound on|off|set <file>|reset\n";
+    return 1;
+}
+
 static void print_usage() {
     std::cout << R"(Usage:
   remind <message> <time_expr> [--daily|--weekly]   Add a reminder
   remind list                                        Show upcoming reminders
   remind delete <id>                                 Delete a reminder by id
+  remind sound on|off                                Enable or disable notification sound
+  remind sound set <file>                            Set a custom notification sound (.caf/.aiff/.wav/.mp3)
+  remind sound reset                                 Reset to the default notification sound
   remind --install                                   Install & start on login
 
 The message does not need quotes. Time tokens (day names, clock times,
@@ -383,6 +466,10 @@ int main(int argc, char* argv[]) {
 
     if (subcmd == "--install") return do_install();
 
+    if (subcmd == "sound") {
+        return do_sound(std::vector<std::string>(args.begin() + 1, args.end()));
+    }
+
     if (subcmd == "list") {
         int fd = daemon_fd();
         nlohmann::json cmd{{"type", "LIST"}};
@@ -412,7 +499,7 @@ int main(int argc, char* argv[]) {
             std::cout << std::string(72, '-') << "\n";
             for (const auto& r : reminders) {
                 std::cout << std::left
-                          << std::setw(20) << format_id(r.id)
+                          << std::setw(20) << std::to_string(r.id)
                           << std::setw(20) << format_time(r.fire_at)
                           << std::setw(10) << recurrence_to_string(r.recurrence)
                           << r.message << "\n";

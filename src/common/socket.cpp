@@ -34,12 +34,17 @@ bool write_line(int fd, const std::string& payload) {
 
 bool read_line(int fd, std::string& out) {
     out.clear();
-    char ch;
+    char buf[4096];
     while (true) {
-        ssize_t n = read(fd, &ch, 1);
+        ssize_t n = read(fd, buf, sizeof(buf));
         if (n <= 0) return false;
-        if (ch == '\n') return true;
-        out += ch;
+        for (ssize_t i = 0; i < n; ++i) {
+            if (buf[i] == '\n') {
+                out.append(buf, static_cast<size_t>(i));
+                return true;
+            }
+        }
+        out.append(buf, static_cast<size_t>(n));
     }
 }
 
