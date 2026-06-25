@@ -40,3 +40,6 @@ conan/
 
 # Compile commands (optional, some prefer to commit this)
 compile_commands.json
+
+api/.env
+api/.env.example
