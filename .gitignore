@@ -45,3 +45,5 @@ compile_commands.json
 api/.env
 web/.env
 web/dist
+api/.env.example
+web/.env.example
