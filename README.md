@@ -39,7 +39,7 @@ sudo apt install cmake g++
 ### Build
 
 ```sh
-git clone <repo-url>
+git clone https://github.com/c-fido/Remindr
 cd remind
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
