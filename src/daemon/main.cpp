@@ -81,7 +81,7 @@ static std::string find_notifier() {
     uint32_t size = sizeof(buf);
     if (_NSGetExecutablePath(buf, &size) == 0) {
         auto helper = std::filesystem::path(buf).parent_path()
-                      / "Redmindr.app" / "Contents" / "MacOS" / "remind-notify";
+                      / "Remindr.app" / "Contents" / "MacOS" / "remind-notify";
         if (std::filesystem::exists(helper))
             return helper.string();
     }
@@ -92,13 +92,13 @@ static std::string find_notifier() {
 static void fire_notification(const std::string& message) {
 #ifdef __APPLE__
     // Prefer the native Swift helper (proper UNUserNotificationCenter, appears in
-    // System Settings > Notifications as "Redmindr"). Fall back to osascript if
+    // System Settings > Notifications as "Remindr"). Fall back to osascript if
     // the helper bundle hasn't been installed.
     static const std::string notifier = find_notifier();
     if (!notifier.empty()) {
         pid_t pid = fork();
         if (pid == 0) {
-            execl(notifier.c_str(), notifier.c_str(), "Redmindr", message.c_str(), (char*)nullptr);
+            execl(notifier.c_str(), notifier.c_str(), "Remindr", message.c_str(), (char*)nullptr);
             _exit(127);
         } else if (pid < 0) {
             std::cerr << "reminderd: fork(): " << std::strerror(errno) << "\n";
@@ -117,7 +117,7 @@ static void fire_notification(const std::string& message) {
         else                safe += c;
     }
     std::string cmd = "osascript -e 'display notification \""
-                    + safe + "\" with title \"Redmindr\"' 2>&1";
+                    + safe + "\" with title \"Remindr\"' 2>&1";
     std::FILE* p = popen(cmd.c_str(), "r");
     if (!p) { std::cerr << "reminderd: failed to launch osascript\n"; return; }
     char buf[256]; std::string out;
@@ -131,14 +131,14 @@ static void fire_notification(const std::string& message) {
 #elif defined(__linux__)
     pid_t pid = fork();
     if (pid == 0) {
-        const char* argv[] = {"notify-send", "Redmindr", message.c_str(), nullptr};
+        const char* argv[] = {"notify-send", "Remindr", message.c_str(), nullptr};
         execvp("notify-send", const_cast<char* const*>(argv));
         _exit(127);
     } else if (pid < 0) {
         std::cerr << "reminderd: fork(): " << std::strerror(errno) << "\n";
     }
 #else
-    std::cerr << "Redmindr: " << message << "\n";
+    std::cerr << "Remindr: " << message << "\n";
 #endif
 }
 

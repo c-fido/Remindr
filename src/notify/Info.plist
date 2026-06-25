@@ -4,15 +4,15 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.redmindr.notify</string>
+    <string>com.remindr.notify</string>
     <key>CFBundleName</key>
-    <string>Redmindr</string>
+    <string>Remindr</string>
     <key>CFBundleDisplayName</key>
-    <string>Redmindr</string>
+    <string>Remindr</string>
     <key>CFBundleExecutable</key>
     <string>remind-notify</string>
     <key>CFBundleIconFile</key>
-    <string>Redmindr</string>
+    <string>Remindr</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundleShortVersionString</key>

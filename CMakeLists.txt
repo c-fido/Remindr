@@ -65,11 +65,11 @@ add_dependencies(remind copy_json)
 if(APPLE)
     find_program(SWIFTC swiftc)
     if(SWIFTC)
-        set(NOTIFY_APP "${CMAKE_BINARY_DIR}/Redmindr.app")
+        set(NOTIFY_APP "${CMAKE_BINARY_DIR}/Remindr.app")
         set(NOTIFY_EXE "${NOTIFY_APP}/Contents/MacOS/remind-notify")
 
-        set(ICONSET_DIR "${CMAKE_BINARY_DIR}/Redmindr.iconset")
-        set(ICNS_FILE   "${NOTIFY_APP}/Contents/Resources/Redmindr.icns")
+        set(ICONSET_DIR "${CMAKE_BINARY_DIR}/Remindr.iconset")
+        set(ICNS_FILE   "${NOTIFY_APP}/Contents/Resources/Remindr.icns")
 
         add_custom_command(
             OUTPUT "${NOTIFY_EXE}" "${ICNS_FILE}"
@@ -90,7 +90,7 @@ if(APPLE)
                 "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/main.swift"
                 "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/Info.plist"
                 "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/make_icon.swift"
-            COMMENT "Building Redmindr notification helper"
+            COMMENT "Building Remindr notification helper"
         )
         add_custom_target(remind_notify ALL DEPENDS "${NOTIFY_EXE}" "${ICNS_FILE}")
     else()
@@ -104,7 +104,7 @@ install(TARGETS remind reminderd
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 if(APPLE AND SWIFTC)
-    install(DIRECTORY "${CMAKE_BINARY_DIR}/Redmindr.app"
+    install(DIRECTORY "${CMAKE_BINARY_DIR}/Remindr.app"
         DESTINATION "${CMAKE_INSTALL_BINDIR}"
         USE_SOURCE_PERMISSIONS
     )
