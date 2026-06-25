@@ -1,4 +1,4 @@
-// Generates a Redmindr.iconset directory suitable for iconutil.
+// Generates a Remindr.iconset directory suitable for iconutil.
 // Usage: swift make_icon.swift <output.iconset>
 import Cocoa
 

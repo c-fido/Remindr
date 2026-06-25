@@ -1,4 +1,4 @@
-# Redmindr
+# Remindr
 
 A lightweight desktop notification scheduler for macOS and Linux.
 
@@ -8,7 +8,7 @@ Two binaries and one helper ship together:
 |-------------------|---------------------------------------------------------------|
 | `reminderd`       | Background daemon — watches timers, fires notifications       |
 | `remind`          | CLI — add, list, and delete reminders                         |
-| `Redmindr.app`    | macOS notification helper (proper Notification Center entry)  |
+| `Remindr.app`    | macOS notification helper (proper Notification Center entry)  |
 
 ---
 
@@ -64,14 +64,14 @@ cmake --install build --prefix ~/.local
 On macOS, also codesign the notification helper so the system accepts it:
 
 ```sh
-codesign -s - --deep --force ~/.local/bin/Redmindr.app
+codesign -s - --deep --force ~/.local/bin/Remindr.app
 ```
 
 Or system-wide:
 
 ```sh
 sudo cmake --install build   # installs to /usr/local/bin
-sudo codesign -s - --deep --force /usr/local/bin/Redmindr.app
+sudo codesign -s - --deep --force /usr/local/bin/Remindr.app
 ```
 
 Make sure the install directory is on your `$PATH`:
@@ -121,13 +121,13 @@ systemctl --user status reminderd
 
 ### Grant notification permission (macOS)
 
-The first time a reminder fires, macOS will prompt you to allow notifications from **Redmindr**. You can also trigger this manually:
+The first time a reminder fires, macOS will prompt you to allow notifications from **Remindr**. You can also trigger this manually:
 
 ```sh
-~/.local/bin/Redmindr.app/Contents/MacOS/remind-notify Redmindr "Notifications enabled!"
+~/.local/bin/Remindr.app/Contents/MacOS/remind-notify Remindr "Notifications enabled!"
 ```
 
-After approving, **Redmindr** appears in **System Settings → Notifications** where you can control the alert style.
+After approving, **Remindr** appears in **System Settings → Notifications** where you can control the alert style.
 
 ---
 
@@ -222,7 +222,7 @@ remind sound reset
 
 | Platform | Notification mechanism                                                  |
 |----------|-------------------------------------------------------------------------|
-| macOS    | `Redmindr.app` Swift helper via `UNUserNotificationCenter` — displays the Redmindr icon and plays the system default sound (or a custom sound if set). Falls back to `osascript` if the helper is missing. |
+| macOS    | `Remindr.app` Swift helper via `UNUserNotificationCenter` — displays the Remindr icon and plays the system default sound (or a custom sound if set). Falls back to `osascript` if the helper is missing. |
 | Linux    | `notify-send`                                                           |
 
 `remind` connects to the daemon over a Unix domain socket (`/tmp/reminderd.sock`) and sends newline-delimited JSON commands (`ADD`, `LIST`, `DELETE`).
@@ -240,6 +240,6 @@ Reminders are persisted to disk on every change. If the file is corrupt at start
 | `~/.config/reminderd/custom-sound.<ext>`                | Custom sound file (copied by `remind sound set`) |
 | `~/.config/reminderd/reminderd.log`                     | Daemon log (autostart only)                   |
 | `/tmp/reminderd.sock`                                   | Unix domain socket                            |
-| `~/.local/bin/Redmindr.app`                             | macOS notification helper (installed with `cmake --install`) |
+| `~/.local/bin/Remindr.app`                             | macOS notification helper (installed with `cmake --install`) |
 | `~/Library/LaunchAgents/com.remind.reminderd.plist`     | macOS autostart (created by `remind --install`) |
 | `~/.config/systemd/user/reminderd.service`              | Linux autostart (created by `remind --install`) |

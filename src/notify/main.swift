@@ -26,7 +26,7 @@ func resolveSound(cfg: [String: Any]?) -> UNNotificationSound {
         let soundsDir = "\(home)/Library/Sounds"
         try? FileManager.default.createDirectory(atPath: soundsDir, withIntermediateDirectories: true)
         let ext  = URL(fileURLWithPath: src).pathExtension
-        let name = "redmindr-custom.\(ext.isEmpty ? "caf" : ext)"
+        let name = "remindr-custom.\(ext.isEmpty ? "caf" : ext)"
         let dest = "\(soundsDir)/\(name)"
         try? FileManager.default.removeItem(atPath: dest)
         if (try? FileManager.default.copyItem(atPath: src, toPath: dest)) != nil {
@@ -50,7 +50,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             guard granted else {
-                fputs("remind-notify: permission denied — open System Settings > Notifications and enable Redmindr\n", stderr)
+                fputs("remind-notify: permission denied — open System Settings > Notifications and enable Remindr\n", stderr)
                 DispatchQueue.main.async { NSApp.terminate(nil) }
                 return
             }
