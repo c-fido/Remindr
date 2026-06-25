@@ -32,6 +32,7 @@ func main() {
 
 	authHandler := handlers.NewAuthHandler(pool, cfg)
 	reminderHandler := handlers.NewReminderHandler(pool)
+	syncHandler := handlers.NewSyncHandler(pool)
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
@@ -54,6 +55,7 @@ func main() {
 			r.Get("/reminders", reminderHandler.List)
 			r.Post("/reminders", reminderHandler.Create)
 			r.Delete("/reminders/{id}", reminderHandler.Delete)
+			r.Post("/sync", syncHandler.Sync)
 		})
 	})
 
