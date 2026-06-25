@@ -40,3 +40,8 @@ conan/
 
 # Compile commands (optional, some prefer to commit this)
 compile_commands.json
+
+# Remindr Sync
+api/.env
+web/.env
+web/dist
