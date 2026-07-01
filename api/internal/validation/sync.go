@@ -30,8 +30,7 @@ func SyncChange(id string, message string, _ int64, recurrence string, deleted b
 	return syncReminderFields(message, recurrence)
 }
 
-// syncReminderFields validates a pushed change without the ±1 year fire_at window —
-// the daemon may sync already-fired or older local reminders.
+// syncReminderFields validates a pushed change without the ±1 year fire_at window, the daemon may sync already-fired or older local reminders.
 func syncReminderFields(message string, recurrence string) error {
 	message = strings.TrimSpace(message)
 	if len(message) < 1 || len(message) > MaxMessageLen {
