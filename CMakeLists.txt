@@ -40,6 +40,12 @@ add_custom_target(copy_json ALL DEPENDS "${JSON_HPP_DST}")
 
 find_package(CURL REQUIRED)
 
+# Skip Remindr.app on CI — iconutil often fails headless; CI only needs remind + reminderd.
+option(REMINDR_SKIP_NOTIFY "Skip macOS notification helper build" OFF)
+if(DEFINED ENV{CI})
+    set(REMINDR_SKIP_NOTIFY ON CACHE BOOL "Skip notify app in CI" FORCE)
+endif()
+
 # ── common object library ─────────────────────────────────────────────────────
 add_library(remind_common STATIC
     src/common/socket.cpp
@@ -73,7 +79,7 @@ add_dependencies(remind copy_json)
 # ── remind-notify (macOS Swift notification helper) ───────────────────────────
 if(APPLE)
     find_program(SWIFTC swiftc)
-    if(SWIFTC)
+    if(SWIFTC AND NOT REMINDR_SKIP_NOTIFY)
         set(NOTIFY_APP "${CMAKE_BINARY_DIR}/Remindr.app")
         set(NOTIFY_EXE "${NOTIFY_APP}/Contents/MacOS/remind-notify")
 
@@ -94,7 +100,7 @@ if(APPLE)
                     -o "${CMAKE_BINARY_DIR}/make_icon"
                     "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/make_icon.swift"
             COMMAND "${CMAKE_BINARY_DIR}/make_icon" "${ICONSET_DIR}"
-            COMMAND sh -c "iconutil -c icns -o '${ICNS_FILE}' '${ICONSET_DIR}' || true"
+            COMMAND iconutil -c icns -o "${ICNS_FILE}" "${ICONSET_DIR}"
             DEPENDS
                 "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/main.swift"
                 "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/Info.plist"
@@ -102,6 +108,8 @@ if(APPLE)
             COMMENT "Building Remindr notification helper"
         )
         add_custom_target(remind_notify ALL DEPENDS "${NOTIFY_EXE}" "${ICNS_FILE}")
+    elseif(SWIFTC)
+        message(STATUS "REMINDR_SKIP_NOTIFY=ON — notification helper not built")
     else()
         message(STATUS "swiftc not found — notification helper not built (osascript fallback active)")
     endif()
@@ -112,7 +120,7 @@ include(GNUInstallDirs)
 install(TARGETS remind reminderd
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
-if(APPLE AND SWIFTC)
+if(APPLE AND SWIFTC AND NOT REMINDR_SKIP_NOTIFY)
     install(DIRECTORY "${CMAKE_BINARY_DIR}/Remindr.app"
         DESTINATION "${CMAKE_INSTALL_BINDIR}"
         USE_SOURCE_PERMISSIONS
