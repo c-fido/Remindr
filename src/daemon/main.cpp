@@ -162,6 +162,8 @@ static void check_timers() {
                 r.updated_at = now;
                 r.sync_status = "pending";
             }
+        } else {
+            ++it;
         }
     }
 
