@@ -6,7 +6,7 @@ A lightweight desktop notification scheduler for macOS and Linux, with optional 
 
 | | URL |
 |--|-----|
-| Web dashboard | https://remindr-xi.vercel.app |
+| Web dashboard | https://remindr.gfedolfi.dev |
 | API health | https://remindr-production-52ef.up.railway.app/health |
 
 [![API CI](https://github.com/c-fido/Remindr/actions/workflows/api.yml/badge.svg)](https://github.com/c-fido/Remindr/actions/workflows/api.yml)
