@@ -45,8 +45,19 @@ bool refresh_access_token() {
 
 std::string api_base_url() {
     const char* env = std::getenv("REMINDR_API_URL");
-    if (env && env[0] != '\0') return std::string(env);
-    return "http://localhost:8080";
+    std::string base;
+    if (env && env[0] != '\0') {
+        base = env;
+    } else if (auto creds = load_credentials()) {
+        base = creds->api_url;
+    }
+    if (base.empty()) {
+        base = "http://localhost:8080";
+    }
+    while (!base.empty() && base.back() == '/') {
+        base.pop_back();
+    }
+    return base;
 }
 
 HttpResponse http_request(

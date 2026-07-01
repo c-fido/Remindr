@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 type Config struct {
@@ -15,8 +16,8 @@ type Config struct {
 func Load() (Config, error) {
 	cfg := Config{
 		Port:        envOr("PORT", "8080"),
-		DatabaseURL: os.Getenv("DATABASE_URL"),
-		JWTSecret:   os.Getenv("JWT_SECRET"),
+		DatabaseURL: cleanEnv("DATABASE_URL"),
+		JWTSecret:   cleanEnv("JWT_SECRET"),
 		WebOrigin:   envOr("WEB_ORIGIN", "http://localhost:5173"),
 	}
 
@@ -31,8 +32,17 @@ func Load() (Config, error) {
 }
 
 func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
+	if v := cleanEnv(key); v != "" {
 		return v
 	}
 	return fallback
+}
+
+// cleanEnv trims whitespace and strips accidental newlines from pasted secrets.
+func cleanEnv(key string) string {
+	v := os.Getenv(key)
+	v = strings.TrimSpace(v)
+	v = strings.ReplaceAll(v, "\n", "")
+	v = strings.ReplaceAll(v, "\r", "")
+	return v
 }

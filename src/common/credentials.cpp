@@ -25,6 +25,7 @@ std::optional<Credentials> load_credentials() {
         c.refresh_token = j.at("refresh_token").get<std::string>();
         c.expires_at    = j.at("expires_at").get<int64_t>();
         c.email         = j.value("email", std::string());
+        c.api_url       = j.value("api_url", std::string());
         return c;
     } catch (...) {
         return std::nullopt;
@@ -43,6 +44,9 @@ bool save_credentials(const Credentials& creds) {
         };
         if (!creds.email.empty()) {
             j["email"] = creds.email;
+        }
+        if (!creds.api_url.empty()) {
+            j["api_url"] = creds.api_url;
         }
 
         std::ofstream f(path);

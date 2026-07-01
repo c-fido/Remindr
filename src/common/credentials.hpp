@@ -11,6 +11,7 @@ struct Credentials {
     std::string refresh_token;
     int64_t     expires_at = 0;  // unix seconds UTC
     std::string email;           // optional, for status display
+    std::string api_url;         // saved on login for launchd daemon
 };
 
 std::optional<Credentials> load_credentials();

@@ -400,6 +400,7 @@ static int do_login(const std::string& email) {
         const int expires_in = body.at("expires_in").get<int>();
         creds.expires_at    = static_cast<int64_t>(std::time(nullptr)) + expires_in;
         creds.email         = email;
+        creds.api_url       = remindr::api_base_url();
 
         if (!remindr::save_credentials(creds)) {
             std::cerr << "remind: failed to save credentials\n";
