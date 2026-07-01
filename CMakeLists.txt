@@ -94,7 +94,7 @@ if(APPLE)
                     -o "${CMAKE_BINARY_DIR}/make_icon"
                     "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/make_icon.swift"
             COMMAND "${CMAKE_BINARY_DIR}/make_icon" "${ICONSET_DIR}"
-            COMMAND iconutil -c icns -o "${ICNS_FILE}" "${ICONSET_DIR}"
+            COMMAND sh -c "iconutil -c icns -o '${ICNS_FILE}' '${ICONSET_DIR}' || true"
             DEPENDS
                 "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/main.swift"
                 "${CMAKE_CURRENT_SOURCE_DIR}/src/notify/Info.plist"
