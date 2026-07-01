@@ -35,6 +35,7 @@ func main() {
 	syncHandler := handlers.NewSyncHandler(pool)
 
 	r := chi.NewRouter()
+	r.Use(middleware.CORS(cfg.WebOrigin))
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
 	r.Use(chimiddleware.Logger)
@@ -43,8 +44,11 @@ func main() {
 
 	r.Get("/health", handlers.Health)
 
+	authLimiter := middleware.NewRateLimiter()
+
 	r.Route("/v1", func(r chi.Router) {
 		r.Route("/auth", func(r chi.Router) {
+			r.Use(middleware.RateLimitAuth(authLimiter))
 			r.Post("/register", authHandler.Register)
 			r.Post("/login", authHandler.Login)
 			r.Post("/refresh", authHandler.Refresh)

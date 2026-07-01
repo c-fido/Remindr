@@ -8,6 +8,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <termios.h>
 #include <unistd.h>
 #include <vector>
 #ifdef __APPLE__
@@ -15,9 +16,12 @@
 #include <mach-o/dyld.h>
 #endif
 
+#include "../common/credentials.hpp"
+#include "../common/http_client.hpp"
 #include "../common/json.hpp"
 #include "../common/reminder.hpp"
 #include "../common/socket.hpp"
+#include "../common/sync_state.hpp"
 
 static const char* SOCK_PATH = "/tmp/reminderd.sock";
 
@@ -25,6 +29,13 @@ static std::string to_lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
         [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
     return s;
+}
+
+static std::string json_id_string(const nlohmann::json& j) {
+    if (j.is_string()) return j.get<std::string>();
+    if (j.is_number_unsigned()) return std::to_string(j.get<uint64_t>());
+    if (j.is_number_integer()) return std::to_string(j.get<int64_t>());
+    return j.get<std::string>();
 }
 
 // Parse "HH:MM", "H:MM", "Hpm", "H:MMpm", "H:MMam" etc.
@@ -253,29 +264,32 @@ static int do_install() {
         std::string uid    = std::to_string(static_cast<unsigned>(real_uid));
         std::string domain = "gui/" + uid;
         static const char* SERVICE_LABEL = "com.remind.reminderd";
+        const std::string service_target = domain + "/" + SERVICE_LABEL;
 
-        // launchd may have auto-loaded the plist already; bootout by label first
-        // so we can do a clean bootstrap.
-        std::string bootout_cmd = "launchctl bootout " + domain + "/" + SERVICE_LABEL + " 2>/dev/null";
-        std::system(bootout_cmd.c_str());
+        // Stop launchd job and any manually started daemon before reloading plist.
+        std::system(("launchctl bootout " + service_target + " 2>/dev/null").c_str());
+        std::system(("launchctl bootout " + domain + " \"" + plist_path + "\" 2>/dev/null").c_str());
+        std::system("pkill -x reminderd 2>/dev/null");
 
-        // bootstrap is the modern way; load -w is deprecated but more lenient on Apple Silicon.
-        std::string bootstrap_cmd = "launchctl bootstrap " + domain + " \"" + plist_path + "\"";
-        std::string load_cmd      = "launchctl load -w \"" + plist_path + "\"";
-        std::string check_cmd     = "launchctl list " + std::string(SERVICE_LABEL) + " >/dev/null 2>&1";
+        const std::string bootstrap_cmd =
+            "launchctl bootstrap " + domain + " \"" + plist_path + "\" 2>/dev/null";
+        const std::string kickstart_cmd =
+            "launchctl kickstart -k " + service_target + " 2>/dev/null";
+        const std::string check_cmd =
+            "launchctl print " + service_target + " >/dev/null 2>&1";
 
         bool started = false;
-        if (std::system(bootstrap_cmd.c_str()) == 0)
+        if (std::system(bootstrap_cmd.c_str()) == 0) {
             started = true;
-        else if (std::system(load_cmd.c_str()) == 0)
-            started = true;
-        else
-            started = (std::system(check_cmd.c_str()) == 0); // auto-loaded by launchd?
+        } else if (std::system(check_cmd.c_str()) == 0) {
+            // Already registered (launchd may auto-load LaunchAgents). Restart it.
+            started = (std::system(kickstart_cmd.c_str()) == 0);
+        }
 
         if (started)
             std::cout << "reminderd started and will launch at every login.\n"
                       << "Note: if notifications do not appear, open System Settings > Notifications\n"
-                      << "and enable notifications for Script Editor.\n";
+                      << "and enable notifications for Remindr.\n";
         else
             std::cout << "Plist installed. To start now:\n"
                       << "  launchctl bootstrap " << domain << " \"" << plist_path << "\"\n"
@@ -329,6 +343,185 @@ static int daemon_fd() {
         std::exit(1);
     }
     return fd;
+}
+
+static int try_daemon_fd() {
+    return connect_to_daemon(SOCK_PATH);
+}
+
+static std::string read_password() {
+    termios oldt{};
+    if (tcgetattr(STDIN_FILENO, &oldt) != 0) {
+        std::string password;
+        std::getline(std::cin, password);
+        return password;
+    }
+
+    termios newt = oldt;
+    newt.c_lflag &= static_cast<tcflag_t>(~ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+
+    std::string password;
+    std::getline(std::cin, password);
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    std::cout << "\n";
+    return password;
+}
+
+static int do_login(const std::string& email) {
+    std::cout << "Password: ";
+    const std::string password = read_password();
+
+    nlohmann::json req{{"email", email}, {"password", password}};
+    const remindr::HttpResponse resp =
+        remindr::http_post_json("/v1/auth/login", req.dump(), false);
+
+    if (resp.status == 0) {
+        std::cerr << "remind: could not reach API at " << remindr::api_base_url() << "\n";
+        std::cerr << "remind: set REMINDR_API_URL if the server is elsewhere\n";
+        return 1;
+    }
+    if (resp.status == 401) {
+        std::cerr << "remind: invalid email or password\n";
+        return 1;
+    }
+    if (resp.status != 200) {
+        std::cerr << "remind: login failed (HTTP " << resp.status << ")\n";
+        if (!resp.body.empty()) std::cerr << resp.body << "\n";
+        return 1;
+    }
+
+    try {
+        auto body = nlohmann::json::parse(resp.body);
+        remindr::Credentials creds;
+        creds.access_token  = body.at("access_token").get<std::string>();
+        creds.refresh_token = body.at("refresh_token").get<std::string>();
+        const int expires_in = body.at("expires_in").get<int>();
+        creds.expires_at    = static_cast<int64_t>(std::time(nullptr)) + expires_in;
+        creds.email         = email;
+
+        if (!remindr::save_credentials(creds)) {
+            std::cerr << "remind: failed to save credentials\n";
+            return 1;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "remind: invalid login response: " << e.what() << "\n";
+        return 1;
+    }
+
+    std::cout << "Logged in as " << email << ".\n";
+
+    int fd = try_daemon_fd();
+    if (fd < 0) {
+        std::cout << "reminderd is not running — start it to sync.\n";
+        return 0;
+    }
+
+    auto resp_str = send_command(fd, nlohmann::json{{"type", "SYNC"}}.dump());
+    close(fd);
+    if (!resp_str) {
+        std::cerr << "remind: no response from daemon\n";
+        return 1;
+    }
+
+    try {
+        auto sync_resp = nlohmann::json::parse(*resp_str);
+        if (!sync_resp.at("ok").get<bool>()) {
+            std::cerr << "remind: initial sync failed: "
+                      << sync_resp.value("error", "unknown error") << "\n";
+            return 1;
+        }
+        std::cout << "Initial sync: applied=" << sync_resp.value("applied", 0)
+                  << " pending=" << sync_resp.value("pending", 0) << "\n";
+    } catch (const std::exception& e) {
+        std::cerr << "remind: parse error: " << e.what() << "\n";
+        return 1;
+    }
+    return 0;
+}
+
+static int do_logout() {
+    if (!remindr::load_credentials()) {
+        std::cout << "Not logged in.\n";
+        return 0;
+    }
+    remindr::delete_credentials();
+    std::cout << "Logged out.\n";
+    return 0;
+}
+
+static int do_sync() {
+    int fd = daemon_fd();
+    auto resp_str = send_command(fd, nlohmann::json{{"type", "SYNC"}}.dump());
+    close(fd);
+    if (!resp_str) {
+        std::cerr << "remind: no response from daemon\n";
+        return 1;
+    }
+
+    try {
+        auto resp = nlohmann::json::parse(*resp_str);
+        if (!resp.at("ok").get<bool>()) {
+            std::cerr << "remind: " << resp.value("error", "sync failed") << "\n";
+            return 1;
+        }
+        std::cout << "Sync complete: applied=" << resp.value("applied", 0)
+                  << " pending=" << resp.value("pending", 0) << "\n";
+    } catch (const std::exception& e) {
+        std::cerr << "remind: parse error: " << e.what() << "\n";
+        return 1;
+    }
+    return 0;
+}
+
+static int do_status() {
+    const int fd = try_daemon_fd();
+    const bool daemon_running = fd >= 0;
+
+    std::cout << "Daemon:     " << (daemon_running ? "running" : "not running") << "\n";
+
+    const auto creds = remindr::load_credentials();
+    if (creds) {
+        std::cout << "Account:    " << (creds->email.empty() ? "(logged in)" : creds->email) << "\n";
+    } else {
+        std::cout << "Account:    not logged in\n";
+    }
+
+    if (daemon_running) {
+        auto resp_str = send_command(fd, nlohmann::json{{"type", "STATUS"}}.dump());
+        close(fd);
+        if (!resp_str) {
+            std::cerr << "remind: no response from daemon\n";
+            return 1;
+        }
+        try {
+            auto resp = nlohmann::json::parse(*resp_str);
+            if (!resp.at("ok").get<bool>()) {
+                std::cerr << "remind: " << resp.value("error", "status failed") << "\n";
+                return 1;
+            }
+            const int64_t last_sync = resp.value("last_sync_at", static_cast<int64_t>(0));
+            if (last_sync > 0) {
+                std::cout << "Last sync:  " << format_time(last_sync) << "\n";
+            } else {
+                std::cout << "Last sync:  never\n";
+            }
+            std::cout << "Pending:    " << resp.value("pending", 0) << "\n";
+        } catch (const std::exception& e) {
+            std::cerr << "remind: parse error: " << e.what() << "\n";
+            return 1;
+        }
+    } else if (creds) {
+        if (auto state = remindr::load_sync_state()) {
+            if (state->last_sync_at > 0) {
+                std::cout << "Last sync:  " << format_time(state->last_sync_at)
+                          << " (from disk; start daemon for live status)\n";
+            }
+        }
+    }
+
+    return 0;
 }
 
 static std::string config_path() {
@@ -426,6 +619,10 @@ static void print_usage() {
   remind <message> <time_expr> [--daily|--weekly]   Add a reminder
   remind list                                        Show upcoming reminders
   remind delete <id>                                 Delete a reminder by id
+  remind login <email>                               Log in and sync with the server
+  remind logout                                      Clear saved credentials
+  remind sync                                        Force sync now
+  remind status                                      Show daemon and sync status
   remind sound on|off                                Enable or disable notification sound
   remind sound set <file>                            Set a custom notification sound (.caf/.aiff/.wav/.mp3)
   remind sound reset                                 Reset to the default notification sound
@@ -470,6 +667,26 @@ int main(int argc, char* argv[]) {
         return do_sound(std::vector<std::string>(args.begin() + 1, args.end()));
     }
 
+    if (subcmd == "login") {
+        if (args.size() < 2) {
+            std::cerr << "remind: login requires an email address\n";
+            return 1;
+        }
+        return do_login(args[1]);
+    }
+
+    if (subcmd == "logout") {
+        return do_logout();
+    }
+
+    if (subcmd == "sync") {
+        return do_sync();
+    }
+
+    if (subcmd == "status") {
+        return do_status();
+    }
+
     if (subcmd == "list") {
         int fd = daemon_fd();
         nlohmann::json cmd{{"type", "LIST"}};
@@ -492,14 +709,14 @@ int main(int argc, char* argv[]) {
                 [](const Reminder& a, const Reminder& b){ return a.fire_at < b.fire_at; });
 
             std::cout << std::left
-                      << std::setw(20) << "ID"
+                      << std::setw(36) << "ID"
                       << std::setw(20) << "When"
                       << std::setw(10) << "Recur"
                       << "Message\n";
-            std::cout << std::string(72, '-') << "\n";
+            std::cout << std::string(88, '-') << "\n";
             for (const auto& r : reminders) {
                 std::cout << std::left
-                          << std::setw(20) << std::to_string(r.id)
+                          << std::setw(36) << r.id
                           << std::setw(20) << format_time(r.fire_at)
                           << std::setw(10) << recurrence_to_string(r.recurrence)
                           << r.message << "\n";
@@ -513,9 +730,7 @@ int main(int argc, char* argv[]) {
 
     if (subcmd == "delete") {
         if (args.size() < 2) { std::cerr << "remind: delete requires an id\n"; return 1; }
-        uint64_t id = 0;
-        try { id = std::stoull(args[1]); }
-        catch (...) { std::cerr << "remind: invalid id: " << args[1] << "\n"; return 1; }
+        const std::string& id = args[1];
 
         int fd = daemon_fd();
         nlohmann::json cmd{{"type", "DELETE"}, {"id", id}};
@@ -605,7 +820,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         std::cout << "Reminder set for " << format_time(static_cast<int64_t>(*fire_at))
-                  << " (id " << resp.at("id").get<uint64_t>() << ")\n";
+                  << " (id " << json_id_string(resp.at("id")) << ")\n";
     } catch (const std::exception& e) {
         std::cerr << "remind: parse error: " << e.what() << "\n";
         return 1;

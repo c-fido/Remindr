@@ -38,16 +38,25 @@ add_custom_command(
 )
 add_custom_target(copy_json ALL DEPENDS "${JSON_HPP_DST}")
 
+find_package(CURL REQUIRED)
+
 # ── common object library ─────────────────────────────────────────────────────
 add_library(remind_common STATIC
     src/common/socket.cpp
+    src/common/paths.cpp
+    src/common/credentials.cpp
+    src/common/sync_state.cpp
+    src/common/http_client.cpp
+    src/common/store.cpp
 )
 target_include_directories(remind_common PUBLIC src/common)
+target_link_libraries(remind_common PUBLIC CURL::libcurl)
 add_dependencies(remind_common copy_json)
 
 # ── reminderd ─────────────────────────────────────────────────────────────────
 add_executable(reminderd
     src/daemon/main.cpp
+    src/daemon/sync_worker.cpp
 )
 target_include_directories(reminderd PRIVATE src/common)
 target_link_libraries(reminderd PRIVATE remind_common)

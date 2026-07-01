@@ -11,6 +11,7 @@ import (
 	"github.com/c-fido/remindr/api/internal/sync"
 	"github.com/c-fido/remindr/api/internal/validation"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -20,6 +21,18 @@ type SyncHandler struct {
 
 func NewSyncHandler(db *pgxpool.Pool) *SyncHandler {
 	return &SyncHandler{db: db}
+}
+
+func writeDBError(w http.ResponseWriter, err error) {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == "23505" {
+			writeError(w, http.StatusConflict,
+				"reminder id already exists (log in with the account that owns local data, or clear local reminders)")
+			return
+		}
+	}
+	writeError(w, http.StatusInternalServerError, "database error")
 }
 
 func (h *SyncHandler) Sync(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +97,7 @@ func (h *SyncHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			serverPtr = &server
 		} else if !errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusInternalServerError, "database error")
+			writeDBError(w, err)
 			return
 		}
 
@@ -98,7 +111,7 @@ func (h *SyncHandler) Sync(w http.ResponseWriter, r *http.Request) {
 				change.Fired, change.Deleted, change.UpdatedAt,
 			)
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "database error")
+				writeDBError(w, err)
 				return
 			}
 			applied++
@@ -112,7 +125,7 @@ func (h *SyncHandler) Sync(w http.ResponseWriter, r *http.Request) {
 				change.UpdatedAt, change.ID, userID,
 			)
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "database error")
+				writeDBError(w, err)
 				return
 			}
 			applied++
