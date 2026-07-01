@@ -1,17 +1,20 @@
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <signal.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 #ifdef __APPLE__
@@ -19,59 +22,54 @@
 #include <mach-o/dyld.h>
 #endif
 
-#include "../common/json.hpp"
+#include "../common/credentials.hpp"
 #include "../common/reminder.hpp"
 #include "../common/socket.hpp"
+#include "../common/store.hpp"
+#include "../common/sync_state.hpp"
+#include "../common/uuid.hpp"
+#include "sync_worker.hpp"
 
 static const char* SOCK_PATH  = "/tmp/reminderd.sock";
 static const int   MAX_CLIENTS = 32;
 
-static const std::string& reminders_path() {
-    static const std::string path = []() {
-        const char* home = std::getenv("HOME");
-        return std::string(home ? home : "/tmp") + "/.config/reminderd/reminders.json";
-    }();
-    return path;
-}
-
 static std::vector<Reminder> g_reminders;
+static std::mutex              g_reminders_mutex;
+static std::atomic<bool>       g_sync_requested{false};
 
 static void save_reminders() {
-    static bool dir_ensured = false;
-    try {
-        const std::string& path = reminders_path();
-        if (!dir_ensured) {
-            std::filesystem::create_directories(std::filesystem::path(path).parent_path());
-            dir_ensured = true;
-        }
-        nlohmann::json j = g_reminders;
-        std::ofstream f(path);
-        if (!f) throw std::runtime_error("cannot open for writing: " + path);
-        f << j.dump(2) << "\n";
-    } catch (const std::exception& e) {
-        std::cerr << "reminderd: save error: " << e.what() << "\n";
+    if (!remindr::save_reminders(g_reminders)) {
+        std::cerr << "reminderd: failed to save reminders\n";
     }
 }
 
 static void load_reminders() {
-    std::string path = reminders_path();
-    try {
-        std::ifstream f(path);
-        if (!f) return; // first run — empty list is fine
-        nlohmann::json j;
-        f >> j;
-        g_reminders = j.get<std::vector<Reminder>>();
-    } catch (const std::exception& e) {
-        std::cerr << "reminderd: reminders.json is malformed (" << e.what()
-                  << "); backing up and starting fresh\n";
-        try {
-            std::string backup = path + ".bak";
-            std::filesystem::copy_file(path, backup,
-                std::filesystem::copy_options::overwrite_existing);
-            std::cerr << "reminderd: backup saved to " << backup << "\n";
-        } catch (...) {}
-        g_reminders.clear();
+    g_reminders = remindr::load_reminders();
+    if (g_reminders.empty()) {
         save_reminders();
+    }
+}
+
+static void sync_thread_fn() {
+    bool first = true;
+    while (true) {
+        if (!first) {
+            for (int i = 0; i < 60; ++i) {
+                if (g_sync_requested.load()) break;
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+        }
+        first = false;
+        g_sync_requested = false;
+
+        if (!remindr::load_credentials()) continue;
+
+        remindr::SyncResult result;
+        {
+            std::lock_guard<std::mutex> lock(g_reminders_mutex);
+            if (!remindr::sync_once(g_reminders, &result)) continue;
+            save_reminders();
+        }
     }
 }
 
@@ -91,9 +89,6 @@ static std::string find_notifier() {
 
 static void fire_notification(const std::string& message) {
 #ifdef __APPLE__
-    // Prefer the native Swift helper (proper UNUserNotificationCenter, appears in
-    // System Settings > Notifications as "Remindr"). Fall back to osascript if
-    // the helper bundle hasn't been installed.
     static const std::string notifier = find_notifier();
     if (!notifier.empty()) {
         pid_t pid = fork();
@@ -103,11 +98,9 @@ static void fire_notification(const std::string& message) {
         } else if (pid < 0) {
             std::cerr << "reminderd: fork(): " << std::strerror(errno) << "\n";
         }
-        // Child is reaped automatically by SIGCHLD SIG_IGN set in main().
         return;
     }
 
-    // osascript fallback — escape for shell (single-quote) and AppleScript (double-quote).
     std::string safe;
     safe.reserve(message.size() * 2);
     for (char c : message) {
@@ -143,22 +136,31 @@ static void fire_notification(const std::string& message) {
 }
 
 static void check_timers() {
+    std::lock_guard<std::mutex> lock(g_reminders_mutex);
+
     auto now = static_cast<int64_t>(std::time(nullptr));
     bool dirty = false;
 
-    for (auto it = g_reminders.begin(); it != g_reminders.end(); ) {
-        if (it->fire_at <= now) {
-            fire_notification(it->message);
+    for (auto& r : g_reminders) {
+        if (r.deleted) continue;
+
+        if (r.fire_at <= now) {
+            fire_notification(r.message);
             dirty = true;
 
-            if (it->recurrence == Recurrence::DAILY) {
-                it->fire_at += 86400;
-                ++it;
-            } else if (it->recurrence == Recurrence::WEEKLY) {
-                it->fire_at += 604800;
-                ++it;
+            if (r.recurrence == Recurrence::DAILY) {
+                r.fire_at += 86400;
+                r.updated_at = now;
+                r.sync_status = "pending";
+            } else if (r.recurrence == Recurrence::WEEKLY) {
+                r.fire_at += 604800;
+                r.updated_at = now;
+                r.sync_status = "pending";
             } else {
-                it = g_reminders.erase(it);
+                r.fired = true;
+                r.deleted = true;
+                r.updated_at = now;
+                r.sync_status = "pending";
             }
         } else {
             ++it;
@@ -168,25 +170,25 @@ static void check_timers() {
     if (dirty) save_reminders();
 }
 
-static uint64_t generate_id() {
-    auto ts  = static_cast<uint64_t>(std::time(nullptr));
-    auto rnd = static_cast<uint64_t>(std::rand() & 0xFFFF); // NOLINT
-    return (ts << 16) | rnd;
-}
-
 static std::string handle_command(const std::string& raw) {
+    std::lock_guard<std::mutex> lock(g_reminders_mutex);
+
     try {
         auto cmd = nlohmann::json::parse(raw);
         std::string type = cmd.at("type").get<std::string>();
 
         if (type == "ADD") {
+            const auto now = static_cast<int64_t>(std::time(nullptr));
             Reminder r{};
-            r.id         = generate_id();
-            r.message    = cmd.at("message").get<std::string>();
-            r.fire_at    = cmd.at("fire_at").get<int64_t>();
-            r.recurrence = recurrence_from_string(
+            r.id          = uuid_v4();
+            r.message     = cmd.at("message").get<std::string>();
+            r.fire_at     = cmd.at("fire_at").get<int64_t>();
+            r.recurrence  = recurrence_from_string(
                 cmd.value("recurrence", std::string("none")));
-            r.fired = false;
+            r.fired       = false;
+            r.deleted     = false;
+            r.updated_at  = now;
+            r.sync_status = "pending";
             g_reminders.push_back(r);
             save_reminders();
             nlohmann::json resp{{"ok", true}, {"id", r.id}};
@@ -197,6 +199,7 @@ static std::string handle_command(const std::string& raw) {
             nlohmann::json arr = nlohmann::json::array();
             auto now = static_cast<int64_t>(std::time(nullptr));
             for (const auto& r : g_reminders) {
+                if (r.deleted) continue;
                 if (r.fire_at >= now || r.recurrence != Recurrence::NONE) {
                     arr.push_back(r);
                 }
@@ -206,15 +209,70 @@ static std::string handle_command(const std::string& raw) {
         }
 
         if (type == "DELETE") {
-            uint64_t id = cmd.at("id").get<uint64_t>();
-            auto before = g_reminders.size();
-            g_reminders.erase(
-                std::remove_if(g_reminders.begin(), g_reminders.end(),
-                    [id](const Reminder& r) { return r.id == id; }),
-                g_reminders.end());
-            bool removed = g_reminders.size() < before;
+            const std::string id = cmd.at("id").is_string()
+                ? cmd.at("id").get<std::string>()
+                : std::to_string(cmd.at("id").get<uint64_t>());
+            const auto now = static_cast<int64_t>(std::time(nullptr));
+            bool removed = false;
+
+            for (auto& r : g_reminders) {
+                if (r.id == id && !r.deleted) {
+                    r.deleted = true;
+                    r.updated_at = now;
+                    r.sync_status = "pending";
+                    removed = true;
+                    break;
+                }
+            }
+
             if (removed) save_reminders();
             nlohmann::json resp{{"ok", removed}};
+            return resp.dump();
+        }
+
+        if (type == "SYNC") {
+            g_sync_requested = true;
+            remindr::SyncResult result;
+            if (!remindr::load_credentials()) {
+                nlohmann::json resp{
+                    {"ok", false},
+                    {"error", "not logged in"},
+                };
+                return resp.dump();
+            }
+            if (!remindr::sync_once(g_reminders, &result)) {
+                nlohmann::json resp{
+                    {"ok", false},
+                    {"error", result.error.empty() ? "sync failed" : result.error},
+                };
+                return resp.dump();
+            }
+            save_reminders();
+            nlohmann::json resp{
+                {"ok", true},
+                {"applied", result.applied},
+                {"pending", result.pending},
+            };
+            return resp.dump();
+        }
+
+        if (type == "STATUS") {
+            const auto creds = remindr::load_credentials();
+            const bool sync_enabled = creds.has_value();
+            int64_t last_sync_at = 0;
+            if (auto state = remindr::load_sync_state()) {
+                last_sync_at = state->last_sync_at;
+            }
+
+            nlohmann::json resp{
+                {"ok", true},
+                {"sync_enabled", sync_enabled},
+                {"last_sync_at", last_sync_at},
+                {"pending", remindr::count_pending(g_reminders)},
+            };
+            if (creds && !creds->email.empty()) {
+                resp["email"] = creds->email;
+            }
             return resp.dump();
         }
 
@@ -228,13 +286,13 @@ static std::string handle_command(const std::string& raw) {
 }
 
 int main() {
-    // Auto-reap notification helper children so they don't block the event loop.
     signal(SIGCHLD, SIG_IGN);
 
-    std::srand(static_cast<unsigned>(std::time(nullptr)));
     load_reminders();
 
-    ::unlink(SOCK_PATH); // remove stale socket from a previous run
+    std::thread(sync_thread_fn).detach();
+
+    ::unlink(SOCK_PATH);
 
     int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_fd < 0) {
@@ -261,7 +319,7 @@ int main() {
     std::cerr << "reminderd: listening on " << SOCK_PATH << "\n";
 
     std::vector<int> client_fds;
-    std::vector<std::string> client_bufs; // parallel partial-read buffers
+    std::vector<std::string> client_bufs;
 
     while (true) {
         fd_set read_fds;
@@ -280,7 +338,6 @@ int main() {
 
         int ready = select(max_fd + 1, &read_fds, nullptr, nullptr, &tv);
 
-        // Always check timers each iteration regardless of select() result.
         check_timers();
 
         if (ready < 0) {
@@ -289,7 +346,7 @@ int main() {
             break;
         }
 
-        if (ready == 0) continue; // timeout — timers already checked above
+        if (ready == 0) continue;
 
         if (FD_ISSET(server_fd, &read_fds)) {
             int client_fd = accept(server_fd, nullptr, nullptr);

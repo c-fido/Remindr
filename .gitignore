@@ -41,5 +41,7 @@ conan/
 # Compile commands (optional, some prefer to commit this)
 compile_commands.json
 
+# Remindr Sync — secrets live in .env only (never commit)
 api/.env
-api/.env.example
+web/.env
+web/dist
