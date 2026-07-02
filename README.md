@@ -46,7 +46,7 @@ flowchart LR
 
 ## Try the live demo
 
-1. Open https://remindr-xi.vercel.app and **register** an account.
+1. Open https://remindr.gfedolfi.dev and **register** an account.
 2. Create a reminder in the web UI.
 3. On your Mac (with Remindr built and installed):
 
