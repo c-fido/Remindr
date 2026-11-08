@@ -51,6 +51,9 @@ bool save_credentials(const Credentials& creds) {
 
         std::ofstream f(path);
         if (!f) return false;
+        // Tokens: owner-only, set before writing them.
+        std::filesystem::permissions(path,
+            std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
         f << j.dump(2) << "\n";
         return true;
     } catch (...) {

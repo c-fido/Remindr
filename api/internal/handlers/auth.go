@@ -119,24 +119,19 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	tokenHash := auth.HashRefreshToken(req.RefreshToken)
 
+	// Consume and rotate in one statement so a token can't be redeemed twice concurrently.
 	var userID string
-	var tokenID string
 	err := h.db.QueryRow(ctx,
-		`SELECT id::text, user_id::text FROM refresh_tokens
-		 WHERE token_hash = $1 AND expires_at > now()`,
+		`DELETE FROM refresh_tokens
+		 WHERE token_hash = $1 AND expires_at > now()
+		 RETURNING user_id::text`,
 		tokenHash,
-	).Scan(&tokenID, &userID)
+	).Scan(&userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusUnauthorized, "invalid or expired refresh token")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "database error")
-		return
-	}
-
-	// Rotate refresh token.
-	if _, err := h.db.Exec(ctx, `DELETE FROM refresh_tokens WHERE id = $1`, tokenID); err != nil {
 		writeError(w, http.StatusInternalServerError, "database error")
 		return
 	}
