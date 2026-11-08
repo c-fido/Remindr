@@ -448,6 +448,10 @@ static int do_logout() {
         return 0;
     }
     remindr::delete_credentials();
+    // Next login pulls the new account's full history instead of resuming the old cursor.
+    remindr::SyncState state = remindr::load_or_create_sync_state();
+    state.last_sync_at = 0;
+    remindr::save_sync_state(state);
     std::cout << "Logged out.\n";
     return 0;
 }

@@ -208,8 +208,9 @@ bool sync_once(std::vector<Reminder>& reminders, SyncResult* result) {
     }
 
     // IDs may belong to another account — assign fresh UUIDs and retry once.
-    if (result->error.find("HTTP 409") != std::string::npos ||
-        result->error.find("HTTP 500") != std::string::npos) {
+    // ponytail: 409 only (a 500 is transient, re-IDing would duplicate edits/deletes).
+    // Still re-IDs every pending row on 409; track "server has seen this id" if that bites.
+    if (result->error.find("HTTP 409") != std::string::npos) {
         log_sync("retrying with new reminder ids");
         reuuid_pending_reminders(reminders, now);
         outgoing.clear();

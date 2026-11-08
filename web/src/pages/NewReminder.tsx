@@ -2,19 +2,20 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ApiError, createReminder } from '../api/client'
 
+// Local time (datetime-local has no timezone), one hour out, rounded up to 15 min.
+function defaultDatetime() {
+  const d = new Date(Date.now() + 3600000)
+  d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15, 0, 0)
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+}
+
 export default function NewReminder() {
   const [message, setMessage] = useState('')
-  const [datetime, setDatetime] = useState('')
+  const [datetime, setDatetime] = useState(defaultDatetime)
   const [recurrence, setRecurrence] = useState<'none' | 'daily' | 'weekly'>('none')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
-
-  function defaultDatetime() {
-    const d = new Date(Date.now() + 3600000)
-    d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15, 0, 0)
-    return d.toISOString().slice(0, 16)
-  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -74,7 +75,7 @@ export default function NewReminder() {
                 <input
                   id="datetime"
                   type="datetime-local"
-                  value={datetime || defaultDatetime()}
+                  value={datetime}
                   onChange={e => setDatetime(e.target.value)}
                   disabled={loading}
                 />

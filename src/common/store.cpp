@@ -102,9 +102,15 @@ bool save_reminders(const std::vector<Reminder>& reminders) {
         std::filesystem::create_directories(std::filesystem::path(path).parent_path());
 
         nlohmann::json j = reminders;
-        std::ofstream f(path);
-        if (!f) return false;
-        f << j.dump(2) << "\n";
+        // Write to a temp file and rename so a crash mid-write can't truncate the store.
+        const std::string tmp = path + ".tmp";
+        {
+            std::ofstream f(tmp);
+            if (!f) return false;
+            f << j.dump(2) << "\n";
+            if (!f.flush()) return false;
+        }
+        std::filesystem::rename(tmp, path);
         return true;
     } catch (const std::exception& e) {
         std::cerr << "reminderd: save error: " << e.what() << "\n";
