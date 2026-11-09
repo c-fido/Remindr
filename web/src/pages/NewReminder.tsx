@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useFormError } from '../formError'
 import { Link, useNavigate } from 'react-router-dom'
 import { ApiError, createReminder } from '../api/client'
 
@@ -13,17 +14,17 @@ export default function NewReminder() {
   const [message, setMessage] = useState('')
   const [datetime, setDatetime] = useState(defaultDatetime)
   const [recurrence, setRecurrence] = useState<'none' | 'daily' | 'weekly'>('none')
-  const [error, setError] = useState('')
+  const { alert, fail, clear, fieldProps } = useFormError()
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setError('')
-    if (!message.trim()) { setError('Reminder message is required.'); return }
-    if (!datetime) { setError('A time is required.'); return }
+    clear()
+    if (!message.trim()) { fail('Reminder message is required.', 'message'); return }
+    if (!datetime) { fail('A time is required.', 'datetime'); return }
     const fire_at = Math.floor(new Date(datetime).getTime() / 1000)
-    if (fire_at <= Date.now() / 1000) { setError('Choose a time in the future.'); return }
+    if (fire_at <= Date.now() / 1000) { fail('Choose a time in the future.', 'datetime'); return }
 
     setLoading(true)
     try {
@@ -31,9 +32,9 @@ export default function NewReminder() {
       navigate('/reminders')
     } catch (err) {
       if (err instanceof ApiError) {
-        setError(err.message)
+        fail(err.message)
       } else {
-        setError('Could not reach the API.')
+        fail('Could not reach the API.')
       }
     } finally {
       setLoading(false)
@@ -53,13 +54,13 @@ export default function NewReminder() {
         <Link to="/reminders" className="back-link">← Reminders</Link>
 
         <div className="form-card">
-          <h2>New reminder</h2>
-          {error && <div className="error-msg">{error}</div>}
+          <h1>New reminder</h1>
+          {alert}
           <form onSubmit={handleSubmit}>
             <div className="field">
               <label htmlFor="message">Message</label>
               <input
-                id="message"
+                {...fieldProps('message')}
                 type="text"
                 maxLength={500}
                 autoFocus
@@ -73,7 +74,7 @@ export default function NewReminder() {
               <div className="field">
                 <label htmlFor="datetime">When</label>
                 <input
-                  id="datetime"
+                  {...fieldProps('datetime')}
                   type="datetime-local"
                   value={datetime}
                   onChange={e => setDatetime(e.target.value)}

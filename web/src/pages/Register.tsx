@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useFormError } from '../formError'
 import { Link, useNavigate } from 'react-router-dom'
 import { ApiError, register } from '../api/client'
 
@@ -6,16 +7,17 @@ export default function Register() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
-  const [error, setError] = useState('')
+  const { alert, fail, clear, fieldProps } = useFormError()
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setError('')
-    if (!email || !password) { setError('All fields are required.'); return }
-    if (password.length < 8) { setError('Password must be at least 8 characters.'); return }
-    if (password !== confirm) { setError('Passwords do not match.'); return }
+    clear()
+    if (!email) { fail('Enter your email.', 'email'); return }
+    if (!password) { fail('Choose a password.', 'password'); return }
+    if (password.length < 8) { fail('Password must be at least 8 characters.', 'password'); return }
+    if (password !== confirm) { fail('Passwords do not match.', 'confirm'); return }
 
     setLoading(true)
     try {
@@ -23,11 +25,11 @@ export default function Register() {
       navigate('/reminders')
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
-        setError('Email already registered.')
+        fail('Email already registered.', 'email')
       } else if (err instanceof ApiError) {
-        setError(err.message)
+        fail(err.message)
       } else {
-        setError('Could not reach the API. Is it running on localhost:8080?')
+        fail("Couldn't reach the sync server. Check your connection, then try again.")
       }
     } finally {
       setLoading(false)
@@ -35,17 +37,17 @@ export default function Register() {
   }
 
   return (
-    <div className="auth-shell">
+    <main className="auth-shell">
       <div className="auth-wordmark">Remindr</div>
       <p className="auth-sub">your reminders, everywhere</p>
       <div className="auth-card">
-        <h2>Create account</h2>
-        {error && <div className="error-msg">{error}</div>}
+        <h1>Create account</h1>
+        {alert}
         <form onSubmit={handleSubmit}>
           <div className="field">
             <label htmlFor="email">Email</label>
             <input
-              id="email"
+              {...fieldProps('email')}
               type="email"
               autoComplete="email"
               value={email}
@@ -57,7 +59,7 @@ export default function Register() {
           <div className="field">
             <label htmlFor="password">Password</label>
             <input
-              id="password"
+              {...fieldProps('password')}
               type="password"
               autoComplete="new-password"
               value={password}
@@ -69,7 +71,7 @@ export default function Register() {
           <div className="field">
             <label htmlFor="confirm">Confirm password</label>
             <input
-              id="confirm"
+              {...fieldProps('confirm')}
               type="password"
               autoComplete="new-password"
               value={confirm}
@@ -86,6 +88,6 @@ export default function Register() {
       <p className="auth-link">
         Already have an account? <Link to="/login">Sign in</Link>
       </p>
-    </div>
+    </main>
   )
 }
