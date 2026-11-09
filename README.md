@@ -7,7 +7,7 @@ A lightweight desktop notification scheduler for macOS and Linux, with optional 
 | | URL |
 |--|-----|
 | Web dashboard | https://remindr.gfedolfi.dev |
-| API health | https://remindr-production-52ef.up.railway.app/health |
+| API health | https://remindr-0x47.onrender.com/health |
 
 [![API CI](https://github.com/c-fido/Remindr/actions/workflows/api.yml/badge.svg)](https://github.com/c-fido/Remindr/actions/workflows/api.yml)
 [![Web CI](https://github.com/c-fido/Remindr/actions/workflows/web.yml/badge.svg)](https://github.com/c-fido/Remindr/actions/workflows/web.yml)
@@ -51,7 +51,7 @@ flowchart LR
 3. On your Mac (with Remindr built and installed):
 
 ```sh
-export REMINDR_API_URL=https://remindr-production-52ef.up.railway.app
+export REMINDR_API_URL=https://remindr-0x47.onrender.com
 remind login you@example.com
 remind sync
 remind list
@@ -225,7 +225,7 @@ remind logout                   # clear tokens; local reminders kept
 **Production (Railway):**
 
 ```sh
-export REMINDR_API_URL=https://remindr-production-52ef.up.railway.app
+export REMINDR_API_URL=https://remindr-0x47.onrender.com
 ```
 
 **Local development:**
